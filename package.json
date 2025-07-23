@@ -1,0 +1,28 @@
+{
+  "name": "com.unity.jobsprofiler",
+  "version": "0.0.1-exp.1",
+  "displayName": "Jobs Profiler",
+  "description": "Package that empowers developers to profile and inspect Jobs",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.unity.burst": "1.8.21",
+    "com.unity.collections": "2.5.1"
+  },
+  "keywords": [
+    "Profiling",
+    "Debugging",
+    "Performance"
+  ],
+  "_upm": {
+    "changelog": "### This is the first release of *Unity Package \\<Jobs Profiler\\>*.\n\nInital release"
+  },
+  "upmCi": {
+    "footprint": "a7faf1d499e9b0ea8ae62f33ace09152c8741abc"
+  },
+  "documentationUrl": "https://docs.unity3d.com/Packages/com.unity.jobsprofiler@0.0/manual/index.html",
+  "repository": {
+    "url": "https://github.cds.internal.unity3d.com/unity/dots.git",
+    "type": "git",
+    "revision": "070c96c4aa85ddd7d2b09e24c1978e70fd000aac"
+  }
+}

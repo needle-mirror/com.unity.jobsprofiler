@@ -1,0 +1,9 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
+    <ui:VisualElement name="main" style="flex-grow: initial; background-color: rgba(0, 0, 0, 0); align-self: flex-start; align-items: auto; justify-content: flex-start; flex-direction: column; height: 20px; flex-shrink: initial; max-height: 20px; min-height: 20px;">
+        <ui:VisualElement name="top_grouping" style="flex-grow: initial; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-between; align-self: center;">
+            <ui:Label text="Frame" name="main_frame" style="width: 216px;" />
+            <ui:TextField picking-mode="Ignore" name="filter" label="Filter" style="width: 300px; opacity: 1;" />
+        </ui:VisualElement>
+    </ui:VisualElement>
+    <ui:VisualElement name="main_view" style="flex-grow: 1;" />
+</ui:UXML>

@@ -1,0 +1,31 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
+    <ui:VisualElement name="root" style="flex-grow: 1; align-items: flex-start; align-self: auto; flex-direction: row;">
+        <ui:VisualElement name="start" style="flex-direction: column; flex-grow: 1;">
+            <ui:VisualElement name="summary_timeline" style="flex-grow: 1; border-top-width: 1px; border-right-width: 1px; border-bottom-width: 1px; border-left-width: 1px; border-left-color: rgb(0, 0, 0); border-right-color: rgb(0, 0, 0); border-top-color: rgb(0, 0, 0); border-bottom-color: rgb(0, 0, 0); height: 40px; max-height: 40px; min-height: 40px;" />
+            <ui:VisualElement name="main_thread" style="background-color: rgba(0, 0, 0, 0.53); flex-grow: 1; min-height: 100px; flex-direction: row;">
+                <ui:VisualElement name="pie_area" style="flex-grow: 1; flex-direction: row; background-color: rgb(40, 40, 40); max-width: 250px; border-top-width: 1px; border-right-width: 1px; border-bottom-width: 1px; border-left-width: 1px; border-left-color: rgb(0, 0, 0); border-right-color: rgb(0, 0, 0); border-top-color: rgb(40, 40, 40); border-bottom-color: rgb(0, 0, 0);">
+                    <ui:Label tabindex="-1" text="CPU Main Thread" display-tooltip-when-elided="true" name="thread_name_label" style="align-self: flex-start; margin-left: 10px;" />
+                    <ui:VisualElement name="pie_lables" style="flex-grow: 1; background-color: rgba(40, 40, 40, 0);">
+                        <ui:VisualElement name="padding" style="min-height: 20px; height: 30px;" />
+                        <ui:VisualElement name="label_0_area" style="flex-grow: initial; background-color: rgba(0, 0, 0, 0); flex-direction: row; flex-shrink: 1; min-height: 21px; height: 20px;">
+                            <ui:VisualElement name="running_color" style="flex-grow: 1; background-color: rgb(22, 22, 22); flex-shrink: 1; max-height: 20px; min-height: 20px; max-width: 20px; min-width: 20px;" />
+                            <ui:Label tabindex="-1" text="Running:" display-tooltip-when-elided="true" name="running_label" style="border-left-width: 4px;" />
+                            <ui:Label tabindex="-1" text="20 ms" display-tooltip-when-elided="true" name="running_time" style="-unity-font-style: bold;" />
+                        </ui:VisualElement>
+                        <ui:VisualElement name="label_1_area" style="flex-grow: initial; background-color: rgba(0, 0, 0, 0); flex-direction: row; flex-shrink: 1; min-height: 21px; height: 20px;">
+                            <ui:VisualElement name="helping_color" style="flex-grow: 1; background-color: rgb(107, 107, 107); flex-shrink: 1; max-height: 20px; min-height: 20px; max-width: 20px; min-width: 20px; border-right-width: 2px;" />
+                            <ui:Label tabindex="-1" text="Helping:" display-tooltip-when-elided="true" name="helping_label" style="border-left-width: 4px;" />
+                            <ui:Label tabindex="-1" text="20 ms" display-tooltip-when-elided="true" name="helping_time" style="-unity-font-style: bold;" />
+                        </ui:VisualElement>
+                        <ui:VisualElement name="label_2_area" style="flex-grow: initial; background-color: rgba(0, 0, 0, 0); flex-direction: row; flex-shrink: 1; min-height: 21px; height: 20px;">
+                            <ui:VisualElement name="waiting_color" style="flex-grow: 1; background-color: rgb(255, 104, 104); flex-shrink: 1; max-height: 20px; min-height: 20px; max-width: 20px; min-width: 20px;" />
+                            <ui:Label tabindex="-1" text="Waiting:" display-tooltip-when-elided="true" name="waiting_label" style="border-left-width: 4px;" />
+                            <ui:Label tabindex="-1" text="20 ms" display-tooltip-when-elided="true" name="waiting_time" style="-unity-font-style: bold;" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="info_panel" style="flex-grow: 1; width: 200px; max-width: 200px; align-items: flex-start; justify-content: flex-start;" />
+    </ui:VisualElement>
+</ui:UXML>
