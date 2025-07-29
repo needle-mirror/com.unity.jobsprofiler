@@ -39,6 +39,12 @@ internal struct FrameDataIndex
     internal FrameIndex index;
 }
 
+internal enum TransitionMode
+{
+    Fixed,
+    Smooth,
+};
+
 internal struct InternalJobHandle
 {
     internal uint index;
@@ -319,6 +325,7 @@ class SmoothEventTransition
     float3 m_start;
     float3 m_end;
     float3 m_pos;
+    bool m_fixed = false;
 
     internal void SetTarget(float time, float duration, float height)
     {
@@ -326,8 +333,22 @@ class SmoothEventTransition
         m_end.x = time;
         m_end.y = duration;
         m_end.z = height;
+        m_end.z = height;
         m_time = 0.0f;
         m_state = State.Transition;
+        m_fixed = false;
+    }
+
+    internal void SetFixedTarget(float time, float duration, float height)
+    {
+        m_pos.x = time;
+        m_pos.y = duration;
+        m_pos.z = height;
+        m_start = m_pos;
+        m_end = m_pos;
+        m_time = 0.0f;
+        m_state = State.Transition;
+        m_fixed = true;
     }
 
     internal bool Update(float dt)
@@ -364,6 +385,7 @@ class SmoothEventTransition
         return false;
     }
     internal float3 Pos { get { return m_pos; } }
+    internal bool Fixed { get { return m_fixed; } }
 }
 
 
@@ -1288,7 +1310,10 @@ class TimelineBarView : VisualElement
         if (m_posTransition.Update(deltaTime))
         {
             var pos = m_posTransition.Pos;
-            FocusOnPosition(pos.x, pos.y, pos.z, m_settings.zoomOnEventHover);
+            if (m_posTransition.Fixed)
+                FocusOnPosition(pos.x, pos.y, pos.z, true);
+            else
+                FocusOnPosition(pos.x, pos.y, pos.z, m_settings.zoomOnEventHover);
         }
 
         if (m_dragRange.show)
@@ -1357,20 +1382,20 @@ class TimelineBarView : VisualElement
         selection.hover = hover;
 
         m_jobSelection = selection;
-        FocusOnElement(selection.frameIndex, selection.eventIndex, m_settings.zoomOnEventFocus, false, selection.hover);
+        FocusOnElement(selection.frameIndex, selection.eventIndex, m_settings.zoomOnEventFocus, false, selection.hover, TransitionMode.Smooth);
     }
 
     void SelectScheduledBy(PointerUpLinkTagEvent evt)
     {
         int eventIndex = m_dependencyInfo.startComplete[0].startEventIndex;
         int frameIndex = m_dependencyInfo.startComplete[0].startFrame;
-        FocusOnElement(frameIndex, eventIndex, m_settings.zoomOnEventFocus, false, false);
+        FocusOnElement(frameIndex, eventIndex, m_settings.zoomOnEventFocus, false, false, TransitionMode.Smooth);
     }
     void SelectCompletedBy(PointerUpLinkTagEvent evt)
     {
         int eventIndex = m_dependencyInfo.startComplete[0].completeEventIndex;
         int frameIndex = m_dependencyInfo.startComplete[0].completeFrame;
-        FocusOnElement(frameIndex, eventIndex, m_settings.zoomOnEventFocus, false, false);
+        FocusOnElement(frameIndex, eventIndex, m_settings.zoomOnEventFocus, false, false, TransitionMode.Smooth);
     }
 
     void CacheFrameData(int currentFrameIndex)
@@ -2142,7 +2167,7 @@ class TimelineBarView : VisualElement
     /// <summary>
     /// This will focus on a specific element in the timeline
     /// </summary>
-    private void FocusOnElement(int frameIndex, int eventId, bool zoomArea, bool fullFrame, bool hover)
+    private void FocusOnElement(int frameIndex, int eventId, bool zoomArea, bool fullFrame, bool hover, TransitionMode transMode)
     {
         FrameData frameData;
         ThreadPosition threadPos;
@@ -2152,23 +2177,27 @@ class TimelineBarView : VisualElement
 
         float startTime;
         float duration;
+        threadPos.offset = 0;
 
         if (fullFrame)
         {
             startTime = 0.0f;
             duration = frameData.info[0].frameTime;
+            threadPos.offset = -(int)(m_zoomArea.temp_y / m_settings.barSize);
         }
         else
         {
             ProfilingEvent temp = frameData.events[eventId];
             startTime = temp.startTime;
             duration = temp.time;
+            ProfilingEvent profEvent = frameData.events[eventId];
+            m_threadOffsets.TryGetValue(frameData.threads[profEvent.threadIndex].threadId, out threadPos);
         }
 
-        ProfilingEvent profEvent = frameData.events[eventId];
-        m_threadOffsets.TryGetValue(frameData.threads[profEvent.threadIndex].threadId, out threadPos);
-
-        m_posTransition.SetTarget(startTime, duration, threadPos.offset);
+        if (transMode == TransitionMode.Fixed)
+            m_posTransition.SetFixedTarget(startTime, duration, threadPos.offset);
+        else
+            m_posTransition.SetTarget(startTime, duration, threadPos.offset);
 
         /*
         if (zoomArea)
@@ -2247,11 +2276,11 @@ class TimelineBarView : VisualElement
         if (evt.keyCode == KeyCode.F)
         {
             bool resetZoom = m_jobSelection.state == JobSelection.State.Default;
-            FocusOnElement(m_jobSelection.frameIndex, m_jobSelection.eventIndex, true, resetZoom, false);
+            FocusOnElement(m_jobSelection.frameIndex, m_jobSelection.eventIndex, true, resetZoom, false, TransitionMode.Fixed);
         }
         else if (evt.keyCode == KeyCode.A)
         {
-            FocusOnElement(m_nextFrame, 0, true, true, false);
+            FocusOnElement(m_nextFrame, 0, true, true, false, TransitionMode.Fixed);
         }
 
         m_zoomArea.SetShownVRange(m_zoomArea.shownArea.y, m_zoomArea.shownArea.y + m_zoomArea.drawRect.height);
