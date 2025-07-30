@@ -1,6 +1,6 @@
 {
   "name": "com.unity.jobsprofiler",
-  "version": "0.0.1-exp.2",
+  "version": "0.0.1-exp.3",
   "displayName": "Jobs Profiler",
   "description": "Package that empowers developers to profile and inspect Jobs",
   "unity": "6000.0",
@@ -14,15 +14,15 @@
     "Performance"
   ],
   "_upm": {
-    "changelog": "### Fixes when pressing F and A for zooming the frame. \n\nInital release"
+    "changelog": "### Fixed so event focus works on in-active frames."
   },
   "upmCi": {
-    "footprint": "a61b8847f5f3b1b34f680814fa1486717905757b"
+    "footprint": "d9ee70362afecf2738eca1fe1fd0e0fcf283ecf4"
   },
   "documentationUrl": "https://docs.unity3d.com/Packages/com.unity.jobsprofiler@0.0/manual/index.html",
   "repository": {
     "url": "https://github.cds.internal.unity3d.com/unity/dots.git",
     "type": "git",
-    "revision": "20b9732cdbc32d98be3e9dcbc23c1636cedc1628"
+    "revision": "e38526edd7c75887cd28d07ba3546f44400c60cf"
   }
 }

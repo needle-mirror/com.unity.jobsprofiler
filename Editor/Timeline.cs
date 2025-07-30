@@ -2175,7 +2175,7 @@ class TimelineBarView : VisualElement
         if (!m_frameCache.GetFrame(frameIndex, out frameData))
             return;
 
-        float startTime;
+        float startTime = 0.0f;
         float duration;
         threadPos.offset = 0;
 
@@ -2188,7 +2188,35 @@ class TimelineBarView : VisualElement
         else
         {
             ProfilingEvent temp = frameData.events[eventId];
-            startTime = temp.startTime;
+
+            // The way we need to calculate it is if the frame is higher we need to go from the current frame
+            // to the end frame, otherwise from the start frame to the current frame.
+            if (frameIndex != m_currentFrameIndex)
+            {
+                // The way we need to calculate it is if the frame is higher we need to go from the current frame
+                // to the end frame, otherwise from the start frame to the current frame.
+                if (frameIndex > m_currentFrameIndex)
+                {
+                    for (int i = m_currentFrameIndex; i < frameIndex; ++i)
+                    {
+                        FrameData fd;
+                        if (m_frameCache.GetFrame(i, out fd))
+                            startTime += fd.info[0].frameTime;
+                    }
+                }
+                else
+                {
+                    for (int i = m_currentFrameIndex - 1; i >= frameIndex; --i)
+                    {
+                        FrameData fd;
+                        if (m_frameCache.GetFrame(i, out fd))
+                            startTime -= fd.info[0].frameTime;
+                    }
+                }
+            }
+
+            // adjust for marker start time
+            startTime += temp.startTime;
             duration = temp.time;
             ProfilingEvent profEvent = frameData.events[eventId];
             m_threadOffsets.TryGetValue(frameData.threads[profEvent.threadIndex].threadId, out threadPos);
