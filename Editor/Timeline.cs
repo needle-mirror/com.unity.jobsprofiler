@@ -187,6 +187,10 @@ internal struct TimelineSettings
     internal bool showCompletedByNoWait;
     internal bool verticalZoom;
     internal bool zoomOnEventHover;
+    /// When an element is smaller than this we expand the hit area to make it easier to select
+    internal const float ExpandWidthHitArea = 4.0f;
+    /// This is the total size of the hit area when we expand it (in pixels)
+    internal const float ExpandWidthHitAreaTotalSize = 5.0f;
     /// Show the fully dependency chain for a job
     internal bool showFullDependencyChain;
 
@@ -482,9 +486,9 @@ struct GenerateMeshJob : IJob
 
         color = Color32.Lerp(color, Color.black, m_frameIndex.fade);
 
-        // this ensures that we always have at least 1 pixel wide quads to reduce flickering
-        if ((c1.x - c0.x) < 1.0f)
-            c1.x = c0.x + 1.0f;
+        // this ensures that we always have at least 2 pixel wide quads to reduce flickering
+        if ((c1.x - c0.x) < 2.0f)
+            c1.x = c0.x + 2.0f;
 
         m_renderer.DrawQuadColor(c0, c1, color);
     }
@@ -616,8 +620,28 @@ struct GenerateMeshJob : IJob
             if (m_mouseState.isRightDown == 0)
             {
                 float2 mousePos = m_mouseState.pos;
-                var inside0 = mousePos >= c0;
-                var inside1 = mousePos < c1;
+
+                bool2 inside0;
+                bool2 inside1;
+
+                // Hit area is smaller than this value we want to expand it to make selection easier.
+                if ((c1.x - c0.x) < TimelineSettings.ExpandWidthHitArea)
+                {
+                    float middlePoint = (c0.x + c1.x) * 0.5f;
+                    float2 startCorner = c0;
+                    float2 endCorner = c1;
+
+                    startCorner.x = middlePoint - (TimelineSettings.ExpandWidthHitAreaTotalSize * 0.5f);
+                    endCorner.x = middlePoint + (TimelineSettings.ExpandWidthHitAreaTotalSize * 0.5f);
+
+                    inside0 = mousePos >= startCorner;
+                    inside1 = mousePos < endCorner;
+                }
+                else
+                {
+                    inside0 = mousePos >= c0;
+                    inside1 = mousePos < c1;
+                }
 
                 if (inside0.x && inside0.y && inside1.x && inside1.y)
                 {

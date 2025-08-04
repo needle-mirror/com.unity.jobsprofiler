@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.0.1-exp.4] - 2025-08-04
+
+### Fixed so it's eaiser to click on small events.
+
 ## [0.0.1-exp.3] - 2025-07-30
 
 ### Fixed so event focus works on in-active frames.
