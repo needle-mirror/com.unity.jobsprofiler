@@ -1,11 +1,11 @@
 {
   "name": "com.unity.jobsprofiler",
-  "version": "0.0.1-exp.4",
+  "version": "0.0.1-exp.5",
   "displayName": "Jobs Profiler",
   "description": "Package that empowers developers to profile and inspect Jobs",
   "unity": "6000.0",
   "dependencies": {
-    "com.unity.burst": "1.8.21",
+    "com.unity.burst": "1.8.25",
     "com.unity.collections": "2.5.1"
   },
   "keywords": [
@@ -14,15 +14,15 @@
     "Performance"
   ],
   "_upm": {
-    "changelog": "### Fixed so it's eaiser to click on small events."
+    "changelog": "Implemented initial version of thread and group folding.\n\n### Fixed so it's eaiser to click on small events."
   },
   "upmCi": {
-    "footprint": "acf32952f02ba9ddabb7387670958486be711bdc"
+    "footprint": "482db9a2eb06310eadd56854e304d8c0ba80d0aa"
   },
   "documentationUrl": "https://docs.unity3d.com/Packages/com.unity.jobsprofiler@0.0/manual/index.html",
   "repository": {
     "url": "https://github.cds.internal.unity3d.com/unity/dots.git",
     "type": "git",
-    "revision": "db024de77ba6b30db8247eb94ba9dbef7dd8dc82"
+    "revision": "5cd56df13e2a70af8b5c25b69f20ad33e2b71c5b"
   }
 }

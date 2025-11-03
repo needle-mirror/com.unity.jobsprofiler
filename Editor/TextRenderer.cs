@@ -133,9 +133,24 @@ internal struct CalculateVisibleLabel : IJob
         float2 scale = new float2(m_settings.mat.c0.x, m_settings.mat.c1.y);
         float2 trans = new float2(m_settings.mat.c3.x, m_settings.mat.c3.y);
 
+        // Get animation progress for smooth text hiding
+        ThreadPosition threadPos;
+        float currentMaxDepth = float.MaxValue;
+
+        if (m_threadOffsets.TryGetValue(threadInfo.threadId, out threadPos))
+        {
+            // Calculate current visible depth based on animation progress
+            float maxDepth = (float)threadPos.depth;
+            currentMaxDepth = math.lerp(1.0f, maxDepth, threadPos.animationProgress);
+        }
+
         for (int eventIndex = threadInfo.eventStart; eventIndex < threadInfo.eventEnd; ++eventIndex)
         {
             ProfilingEvent profEvent = m_events[eventIndex];
+
+            // Hide text slightly early (0.5 units before clip threshold) for Option 1
+            if (profEvent.level >= currentMaxDepth - 0.5f)
+                continue;
 
             float2 posLocal = new float2(profEvent.startTime + m_frameIndex.time, threadOffset + profEvent.level);
             float2 sizeLocal = new float2(profEvent.time, m_settings.invYBarSize);

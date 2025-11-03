@@ -207,6 +207,10 @@ internal struct ThreadGroupInfo
     /// This is the calculated max depth for all the current visible groups.
     /// We need to do it this way so that all the threads line up correctly in the timeline
     internal int maxDepth;
+    /// Whether this group is folded/collapsed
+    internal bool isFolded;
+    /// Vertical offset position for this group's label
+    internal float offset;
 }
 
 /// Mouse state used inside job to t
@@ -524,12 +528,34 @@ struct GenerateMeshJob : IJob
         float2 scale = new float2(m_settings.mat.c0.x, m_settings.mat.c1.y);
         float2 trans = new float2(m_settings.mat.c3.x, m_settings.mat.c3.y);
 
+        // Get animation progress for smooth clipping
+        ThreadPosition threadPos;
+        float currentMaxDepth = float.MaxValue;
+
+        if (m_threadOffsets.TryGetValue(threadInfo.threadId, out threadPos))
+        {
+            // Calculate current visible depth based on animation progress
+            float maxDepth = (float)threadPos.depth;
+            currentMaxDepth = math.lerp(1.0f, maxDepth, threadPos.animationProgress);
+        }
+
         for (int eventIndex = threadInfo.eventStart; eventIndex < threadInfo.eventEnd;)
         {
             ProfilingEvent profEvent = m_events[eventIndex];
 
+            // Skip events beyond current animated depth
+            if (profEvent.level >= currentMaxDepth)
+            {
+                eventIndex++;
+                continue;
+            }
+
             float2 posLocal = new float2(profEvent.startTime + m_frameIndex.time, threadOffset + profEvent.level);
             float2 sizeLocal = new float2(profEvent.time, m_settings.invYBarSize);
+
+            // Clip bar height if partially visible (event is being clipped)
+            float visibleHeight = math.min(1.0f, currentMaxDepth - profEvent.level);
+            sizeLocal.y *= visibleHeight;
             float2 cornerLocal = posLocal + sizeLocal;
 
             float2 pos = (posLocal * scale) + trans;
@@ -964,6 +990,8 @@ class TimelineBarView : VisualElement
     internal List<NativeArray<JobSelection>> m_jobSelectionJobs;
     internal JobSelection m_jobSelection;
     internal NativeHashMap<ulong, ThreadPosition> m_threadOffsets;
+    internal bool m_isAnimating; // True when any thread is animating
+    internal float m_totalThreadHeight; // Total height in bar units (calculated by CalculateThreadOffsets)
     internal DependenciesInfo m_dependencyInfo;
     internal TimelineSettings m_settings;
     internal SelectedFrameRange m_selectedFrameRange;
@@ -1001,6 +1029,8 @@ class TimelineBarView : VisualElement
     internal TimelineBarView(VisualElement parent, VisualElement rootView, FrameCache frameCache, Filter filter)
     {
         m_threads = new ThreadLabels();
+        m_threads.SetThreadFoldCallback(OnThreadFoldToggled);
+        m_threads.SetGroupFoldCallback(OnGroupFoldToggled);
         m_tickHandler = new TickHandler();
         m_zoomArea = new ZoomableArea();
         m_frameCache = frameCache;
@@ -1014,15 +1044,16 @@ class TimelineBarView : VisualElement
             m_primitiveRenderers[i] = new PrimitiveRenderer(1024);
 
         // Set up the default order for the thread groups
+        // Main Thread is expanded by default, all others are folded
         m_threadGroupOrder = new NativeArray<ThreadGroupInfo>(new ThreadGroupInfo[]
         {
-            new ThreadGroupInfo { name = "Main Thread" },
-            new ThreadGroupInfo { name = "Job" },
-            new ThreadGroupInfo { name = "Render Thread" },
-            new ThreadGroupInfo { name = "Profiler" },
-            new ThreadGroupInfo { name = "Scripting Threads" },
-            new ThreadGroupInfo { name = "Background Job" },
-            new ThreadGroupInfo { name = "Other Threads" },
+            new ThreadGroupInfo { name = "Main Thread", isFolded = false },
+            new ThreadGroupInfo { name = "Job", isFolded = true },
+            new ThreadGroupInfo { name = "Render Thread", isFolded = true },
+            new ThreadGroupInfo { name = "Profiler", isFolded = true },
+            new ThreadGroupInfo { name = "Scripting Threads", isFolded = true },
+            new ThreadGroupInfo { name = "Background Job", isFolded = true },
+            new ThreadGroupInfo { name = "Other Threads", isFolded = true },
         }, Allocator.Persistent);
 
         var path = AssetDatabase.GUIDToAssetPath("b0985b7634d92484d8ee04985e42ef9e");
@@ -1063,6 +1094,7 @@ class TimelineBarView : VisualElement
 
         m_settings = new TimelineSettings();
         m_threadOffsets = new NativeHashMap<ulong, ThreadPosition>(1, Allocator.Persistent);
+        m_isAnimating = false;
 
         m_dependencyInfo.startComplete = new NativeArray<StartCompleteInfo>(1, Allocator.Persistent);
         m_dependencyInfo.dependencyJobs = new NativeList<DependJobInfo>(32, Allocator.Persistent);
@@ -1228,6 +1260,10 @@ class TimelineBarView : VisualElement
         float deltaTime = (float)(currentTimeSinceStartup - m_lastTimeSinceStartup);
         m_lastTimeSinceStartup = currentTimeSinceStartup;
 
+        // Update fold animations
+        if (m_isAnimating)
+            UpdateAnimations(deltaTime);
+
         WaitPreviousFrameJobs();
 
         if (m_nextFrame == -1)
@@ -1264,19 +1300,14 @@ class TimelineBarView : VisualElement
 
         if (m_frameCache.GetFrame(m_nextFrame, out frame))
         {
-            float totalThreadHeight = 0.0f;
+            // Use the total height calculated by CalculateThreadOffsets
+            float totalThreadHeightPixels = m_totalThreadHeight * m_barSize;
 
-            foreach (var offset in m_threadOffsets) {
-                totalThreadHeight += (float)offset.Value.depth;
-            }
-
-            totalThreadHeight *= m_barSize;
-
-            m_threads.Update(m_threadOffsets, frame, m_settings.mat);
-            m_verticalScroller.highValue = totalThreadHeight;
+            m_threads.Update(m_threadOffsets, frame, m_threadGroupOrder, m_settings.mat);
+            m_verticalScroller.highValue = totalThreadHeightPixels;
             m_verticalScroller.Adjust(0.25f);
             m_zoomArea.hBaseRangeMax = frame.info[0].frameTime;
-            m_zoomArea.vBaseRangeMax = totalThreadHeight;
+            m_zoomArea.vBaseRangeMax = totalThreadHeightPixels;
             frameTime = frame.info[0].frameTime;
         }
 
@@ -1371,7 +1402,7 @@ class TimelineBarView : VisualElement
 
                 m_dragRange.textLabel.visible = true;
                 m_dragRange.textLabel.text = text;
-                m_dragRange.textLabel.transform.position = new Vector3(xStart + textCenter, 0.0f, 0.0f);
+                m_dragRange.textLabel.style.translate = new StyleTranslate(new Translate(new Length(xStart + textCenter), new Length(0.0f), 0.0f));
             }
         }
     }
@@ -1548,6 +1579,83 @@ class TimelineBarView : VisualElement
         return groups;
     }
 
+    (bool isFolded, float animationProgress) GetThreadFoldState(ulong threadId, FixedString128Bytes groupName, in NativeHashMap<ulong, ThreadPosition> preservedStates)
+    {
+        // Default: fold all threads except Main Thread
+        bool isMainThread = groupName.ToString() == "Main Thread";
+        bool isFolded = !isMainThread;
+        float animationProgress = isMainThread ? 1.0f : 0.0f;
+
+        // Preserve existing user state if available
+        if (preservedStates.TryGetValue(threadId, out ThreadPosition existingPos))
+        {
+            isFolded = existingPos.isFolded;
+            animationProgress = existingPos.animationProgress;
+        }
+
+        return (isFolded, animationProgress);
+    }
+
+    void UpdateAnimations(float deltaTime)
+    {
+        const float animationSpeed = 10.0f; // Complete animation in ~0.1 seconds
+        bool anyAnimating = false;
+
+        var keys = m_threadOffsets.GetKeyArray(Allocator.Temp);
+        for (int i = 0; i < keys.Length; i++)
+        {
+            ulong threadId = keys[i];
+            if (m_threadOffsets.TryGetValue(threadId, out ThreadPosition threadPos))
+            {
+                float targetProgress = threadPos.isFolded ? 0.0f : 1.0f;
+
+                if (math.abs(threadPos.animationProgress - targetProgress) > 0.01f)
+                {
+                    // Animate towards target
+                    float step = animationSpeed * deltaTime;
+                    threadPos.animationProgress = math.lerp(threadPos.animationProgress, targetProgress, step);
+
+                    // Snap to target when close enough
+                    if (math.abs(threadPos.animationProgress - targetProgress) < 0.01f)
+                        threadPos.animationProgress = targetProgress;
+
+                    m_threadOffsets[threadId] = threadPos;
+                    anyAnimating = true;
+                }
+            }
+        }
+        keys.Dispose();
+
+        m_isAnimating = anyAnimating;
+    }
+
+    void OnGroupFoldToggled(FixedString128Bytes groupName)
+    {
+        // Find the group and toggle its fold state
+        for (int i = 0; i < m_threadGroupOrder.Length; i++)
+        {
+            if (m_threadGroupOrder[i].name.Equals(groupName))
+            {
+                var group = m_threadGroupOrder[i];
+                group.isFolded = !group.isFolded;
+                m_threadGroupOrder[i] = group;
+                break;
+            }
+        }
+    }
+
+    void OnThreadFoldToggled(ulong threadId)
+    {
+        // Toggle fold state and start animation
+        if (m_threadOffsets.TryGetValue(threadId, out ThreadPosition threadPos))
+        {
+            threadPos.isFolded = !threadPos.isFolded;
+            // animationProgress stays at current value, will be updated in UpdateAnimations
+            m_threadOffsets[threadId] = threadPos;
+            m_isAnimating = true;
+        }
+    }
+
     // TODO: Move to job
     /// <summary>
     /// This constructs the thread offsets for each frame. This code is a bit complex because it has to deal
@@ -1555,18 +1663,39 @@ class TimelineBarView : VisualElement
     /// for each group. If the hash matches along all the frames we assume they are the same and we can do a fast path when
     /// looping over all of the groups. Otherwise we need to "diff" the thread data between frames to find the differences.
     /// </summary>
-    void CalculateThreadOffsets(in NativeList<FrameDataIndex> frames)
+    float CalculateThreadOffsets(in NativeList<FrameDataIndex> frames)
     {
+        // Preserve fold states and animation progress before clearing
+        var preservedStates = new NativeHashMap<ulong, ThreadPosition>(m_threadOffsets.Count, Allocator.Temp);
+        foreach (var kvp in m_threadOffsets)
+        {
+            preservedStates.TryAdd(kvp.Key, kvp.Value);
+        }
+
         m_threadOffsets.Clear();
 
-        int threadOffset = 0;
+        float threadOffset = 0.0f;
 
-        foreach (var group in m_threadGroupOrder)
+        for (int groupIndex = 0; groupIndex < m_threadGroupOrder.Length; groupIndex++)
         {
+            var group = m_threadGroupOrder[groupIndex];
             List<ThreadGroupFrameIndex> groupsIndex = GetGroups(frames, group.name);
 
             if (groupsIndex.Count == 0)
                 continue;
+
+            // Store the offset for this group so we can position its label
+            group.offset = threadOffset;
+            m_threadGroupOrder[groupIndex] = group;
+
+            // Reserve space for the group header label
+            threadOffset += 1.0f;
+
+            // If group is folded, skip adding threads (we already added space for the header)
+            if (group.isFolded)
+            {
+                continue;
+            }
 
             // Check if the groups has the same hash
             int hash = groupsIndex[0].group.groupNamesHash;
@@ -1609,14 +1738,22 @@ class TimelineBarView : VisualElement
                         maxDepth = math.max(maxDepth, depth);
                     }
 
-                    m_threadOffsets.TryAdd(threadId, new ThreadPosition
+                    // Get or preserve existing fold state and animation progress
+                    var (isFolded, animationProgress) = GetThreadFoldState(threadId, group.name, preservedStates);
+
+                    // Lerp between folded (1) and expanded (maxDepth) based on animation progress
+                    float lerpedDepth = math.lerp(1.0f, (float)maxDepth, animationProgress);
+
+                    m_threadOffsets[threadId] = new ThreadPosition
                     {
                         visibility = ThreadVisibility.Visible,
                         depth = maxDepth,
                         offset = threadOffset,
-                    });
+                        isFolded = isFolded,
+                        animationProgress = animationProgress,
+                    };
 
-                    threadOffset += maxDepth;
+                    threadOffset += lerpedDepth;
                 }
             }
             else
@@ -1670,17 +1807,29 @@ class TimelineBarView : VisualElement
                 // 3. Loop over all entries and create the thread offsets lookup
                 foreach (var threadInfo in sortData)
                 {
-                    m_threadOffsets.TryAdd(threadInfo.threadId, new ThreadPosition
+                    // Get or preserve existing fold state and animation progress
+                    var (isFolded, animationProgress) = GetThreadFoldState(threadInfo.threadId, group.name, preservedStates);
+
+                    // Lerp between folded (1) and expanded (maxDepth) based on animation progress
+                    float lerpedDepth = math.lerp(1.0f, (float)threadInfo.depth, animationProgress);
+
+                    m_threadOffsets[threadInfo.threadId] = new ThreadPosition
                     {
                         visibility = ThreadVisibility.Visible,
                         depth = threadInfo.depth,
                         offset = threadOffset,
-                    });
+                        isFolded = isFolded,
+                        animationProgress = animationProgress,
+                    };
 
-                    threadOffset += threadInfo.depth;
+                    threadOffset += lerpedDepth;
                 }
             }
         }
+
+        preservedStates.Dispose();
+
+        return threadOffset; // Return total accumulated height
     }
 
     void UpdateZoom()
@@ -1874,7 +2023,7 @@ class TimelineBarView : VisualElement
             return;
         }
 
-        CalculateThreadOffsets(frames);
+        m_totalThreadHeight = CalculateThreadOffsets(frames);
 
         m_activeMeshGenerators.Clear();
 

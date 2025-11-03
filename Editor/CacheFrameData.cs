@@ -207,7 +207,15 @@ internal struct ThreadPosition
     /// <summary>
     /// Offset of the thread being displayed.
     /// </summary>
-    internal int offset;
+    internal float offset;
+    /// <summary>
+    /// Whether this thread is folded/collapsed.
+    /// </summary>
+    internal bool isFolded;
+    /// <summary>
+    /// Animation progress: 0.0 = fully folded, 1.0 = fully expanded.
+    /// </summary>
+    internal float animationProgress;
 }
 
 /// <summary>

@@ -364,8 +364,8 @@ internal class FrameSelector : VisualElement
 
     void OnGenerateVisualContent(MeshGenerationContext mgc)
     {
-        m_settings.area.x = transform.position.x;
-        m_settings.area.y = transform.position.y;
+        m_settings.area.x = resolvedStyle.translate.x;
+        m_settings.area.y = resolvedStyle.translate.y;
         m_settings.area.width = resolvedStyle.width;
         //m_settings.area.height = resolvedStyle.height;
         m_settings.area.height = 190;
