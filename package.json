@@ -1,6 +1,6 @@
 {
   "name": "com.unity.jobsprofiler",
-  "version": "0.0.1-exp.5",
+  "version": "0.0.1-exp.6",
   "displayName": "Jobs Profiler",
   "description": "Package that empowers developers to profile and inspect Jobs",
   "unity": "6000.0",
@@ -14,15 +14,15 @@
     "Performance"
   ],
   "_upm": {
-    "changelog": "Implemented initial version of thread and group folding.\n\n### Fixed so it's eaiser to click on small events."
+    "changelog": "### Added\n* Toolbar search field for filtering events\n* Settings menu (kebab menu) in toolbar\n* Mini preview for folded thread groups\n* Tree-view style indentation for thread labels under groups\n* Dynamic visible depth - thread heights animate to match visible content depth\n\n### Changed\n* Use Foldout widget for thread and group labels\n* Job group display names now use plural form (\"Jobs\", \"Background Jobs\")\n* Standard background color for UI panels\n\n### Fixed\n* Grayscale filter for final merged bar\n* Frame fading when switching between frames\n* Filter out Main Thread root marker from display\n* Dim filtered events instead of hiding them\n* Thread fold state not restored correctly after unfolding a group\n\n### Performance\n* Optimize dependency lookup with hashmaps (O(n) to O(1) lookups)"
   },
   "upmCi": {
-    "footprint": "482db9a2eb06310eadd56854e304d8c0ba80d0aa"
+    "footprint": "126f79e85161982389e2894550060d6b534a9232"
   },
   "documentationUrl": "https://docs.unity3d.com/Packages/com.unity.jobsprofiler@0.0/manual/index.html",
   "repository": {
     "url": "https://github.cds.internal.unity3d.com/unity/dots.git",
     "type": "git",
-    "revision": "5cd56df13e2a70af8b5c25b69f20ad33e2b71c5b"
+    "revision": "0d8c6f4da3e784315204eb4ea8d0972ceac63c98"
   }
 }

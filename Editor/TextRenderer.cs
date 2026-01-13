@@ -169,8 +169,8 @@ internal struct CalculateVisibleLabel : IJob
             if (size.x < kMinSize || !m_settings.windowRect.Overlaps(barRect))
                 continue;
 
-            if (m_useFilter && !m_idFilters.Contains(profEvent.markerId))
-                continue;
+            // Check if event is filtered out (will be rendered dimmed)
+            bool isFilteredOut = m_useFilter && !m_idFilters.Contains(profEvent.markerId);
 
             // If we have a position that is outside the window we clamp it to zero and see if we still have
             // some text to render and also adjust the size
@@ -196,6 +196,10 @@ internal struct CalculateVisibleLabel : IJob
                 if ((m_frameIndex.frameCacheIndex != m_jobSelection.frameIndex) || (m_jobSelection.eventIndex != eventIndex))
                     alpha *= 0.5f;
             }
+
+            // Fade out text for filtered events (dimmed bars)
+            if (isFilteredOut)
+                alpha *= 0.35f;
 
             ulong key = (((ulong)m_frameIndex.frameCacheIndex) << 32) | (ulong)(uint)eventIndex;
 
@@ -228,6 +232,10 @@ internal struct CalculateVisibleLabel : IJob
 
             if (m_threadOffsets.TryGetValue(thread.threadId, out threadPos))
             {
+                // Skip text for folded preview mode (compact bars don't show text)
+                if (threadPos.visibility == ThreadVisibility.Preview)
+                    continue;
+
                 float startY = (threadPos.offset * scale) + trans;
                 float endY = startY + ((threadPos.offset + threadPos.depth) * scale);
 
@@ -272,6 +280,10 @@ internal struct CalculateLabelUpdatesJob : IJob
     internal NativeArray<uint> m_frameCounts;
     /// This allows us to check if we have a key to remove when allocating a new slot
     internal NativeArray<ulong> m_lookupKeys;
+
+    // Background color for fading non-selected frames (passed in from TimelineBarView)
+    [ReadOnly]
+    internal Color m_backgroundColor;
 
     /// This code will in a linear fashion finds the lowest frame count number.
     /// As this code just tries to find in a linear fashion it needs to be pretty fast
@@ -390,7 +402,8 @@ internal struct CalculateLabelUpdatesJob : IJob
             float fade = frameIndex.fade;
 
             Color startColor = Color.white;
-            Color endColor = Color.black;
+            // Fade toward background color to match bar fading
+            Color endColor = m_backgroundColor;
 
             if (textInfo.categoryId == 3)
                 startColor = new Color(0.2f, 0.2f, 0.2f, 1.0f);
@@ -527,7 +540,7 @@ internal class TextRenderer
         return job.Schedule(dependency);
     }
 
-    internal void PostUpdate(JobHandle prevHandle, in NativeArray<FrameIndex> frameIndices, in FrameCache frameCache)
+    internal void PostUpdate(JobHandle prevHandle, in NativeArray<FrameIndex> frameIndices, in FrameCache frameCache, Color backgroundColor)
     {
         var labelsJob = new CalculateLabelUpdatesJob
         {
@@ -539,6 +552,7 @@ internal class TextRenderer
             m_labelLookup = m_labelLookup,
             m_frameCounts = m_frameCounts,
             m_lookupKeys = m_lookupKeys,
+            m_backgroundColor = backgroundColor,
         };
 
         labelsJob.Schedule(prevHandle).Complete();

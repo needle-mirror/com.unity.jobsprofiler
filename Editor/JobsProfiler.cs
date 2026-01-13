@@ -6,6 +6,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+using UnityEditor.UIElements;
 using UnityEngine.Networking.PlayerConnection;
 using System.Runtime.CompilerServices;
 
@@ -41,13 +42,13 @@ internal class JobsProfiler : VisualElement
     TimelineBarView m_timelineView = null;
     FrameCache m_frameCache;
     Filter m_filter;
-    Label m_frameLabel;
+    ToolbarSearchField m_searchField;
+    VisualElement m_timeline;
+    VisualElement m_filterSpacer;
     long m_currentFrame = 0;
 
     internal void SelectFrame(long frame)
     {
-        // + 1 here to match the frame selectors way of counting
-        m_frameLabel.text = "Frame " + (frame + 1);
         m_currentFrame = frame;
         m_timelineView.SetCurrentFrame((int)frame);
     }
@@ -55,6 +56,29 @@ internal class JobsProfiler : VisualElement
     {
         if (m_timelineView != null)
             m_timelineView.Update();
+
+        UpdateSearchBarPosition();
+    }
+
+    void UpdateSearchBarPosition()
+    {
+        // Position searchbar right edge to align with timeline right edge
+        if (m_timeline != null && m_searchField != null && m_filterSpacer != null)
+        {
+            var timelineRect = m_timeline.worldBound;
+            var parentRect = m_filterSpacer.parent.worldBound;
+            var searchWidth = m_searchField.resolvedStyle.width;
+
+            if (timelineRect.width > 0 && searchWidth > 0 && parentRect.width > 0)
+            {
+                // Convert timeline right edge to parent-relative coordinates
+                float timelineRightRelative = timelineRect.xMax - parentRect.xMin;
+                float spacerWidth = timelineRightRelative - searchWidth;
+
+                if (spacerWidth > 0)
+                    m_filterSpacer.style.width = spacerWidth;
+            }
+        }
     }
 
     internal void Update()
@@ -70,6 +94,7 @@ internal class JobsProfiler : VisualElement
 
         m_timelineView.Update();
         m_frameCache.Update();
+        UpdateSearchBarPosition();
     }
 
     internal void ClearCaches()
@@ -104,22 +129,26 @@ internal class JobsProfiler : VisualElement
         var mainVisualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(path);
         var tree = mainVisualTree.Instantiate();
 
-        TextField filter = tree.Query<TextField>("filter").First();
+        m_searchField = tree.Query<ToolbarSearchField>("filter").First();
+        m_filterSpacer = tree.Query<VisualElement>("filter_spacer").First();
+        m_filterSpacer.style.flexGrow = 0;
 
         VisualElement mv = tree.Query<VisualElement>("main_view").First();
         mv.style.flexGrow = 1;
         tree.style.flexGrow = 1;
+        tree.style.backgroundColor = new Color(0.22f, 0.22f, 0.22f, 1.0f);
 
-        m_filter = new Filter(m_frameCache, filter);
+        m_filter = new Filter(m_frameCache, m_searchField);
 
         m_timelineView = new TimelineBarView(mv, tree, m_frameCache, m_filter);
+
+        // Get reference to timeline element for dynamic searchbar sizing
+        m_timeline = m_timelineView.Query<VisualElement>("timeline").First();
         m_timelineView.style.display = DisplayStyle.Flex;
         m_timelineView.SetCurrentFrame((int)m_currentFrame);
         m_timelineView.m_stats.Show();
 
         Add(tree);
-
-        m_frameLabel = this.Query<Label>("main_frame").First();
 
         EditorApplication.update += Update;
         RegisterCallback<GeometryChangedEvent>(OnGeometryChangedEvent);

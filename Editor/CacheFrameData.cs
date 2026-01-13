@@ -216,6 +216,14 @@ internal struct ThreadPosition
     /// Animation progress: 0.0 = fully folded, 1.0 = fully expanded.
     /// </summary>
     internal float animationProgress;
+    /// <summary>
+    /// Height multiplier for folded group preview rendering (0.0-1.0).
+    /// </summary>
+    internal float previewHeight;
+    /// <summary>
+    /// Animated visible depth - smoothly transitions towards the actual visible depth.
+    /// </summary>
+    internal float visibleDepth;
 }
 
 /// <summary>
@@ -273,6 +281,8 @@ internal struct FrameData
     internal NativeHashMap<ulong, int> handleIndexLookup;
     /// <summary>Maps event indices to job handle values</summary>
     internal NativeHashMap<int, ulong> eventHandleLookup;
+    /// <summary>Maps job handle to schedule index for O(1) lookup</summary>
+    internal NativeHashMap<ulong, int> handleToScheduleIndex;
     /// <summary>Detailed information about jobs scheduled in this frame</summary>
     internal NativeList<ScheduledJobInfo> scheduledJobs;
     /// <summary>Collection of all job dependencies referenced in the frame. ScheduledJobInfo has an index into this table</summary>
@@ -590,11 +600,14 @@ struct CacheFrameJob : IJob
     bool AddCacheSample(ref FrameData output, ref Stack<HandleTime> handleStack, in RawFrameDataView inputFrameData, ushort threadIndex, int index, int level, int parent)
     {
         var markerId = inputFrameData.GetSampleMarkerId(index);
+        var name = inputFrameData.GetSampleName(index);
+
+        // Skip the "Main Thread" marker that Unity adds at the root level
+        if (level == 0 && name == "Main Thread")
+            return false;
 
         if (!output.stringIndex.ContainsKey(markerId))
         {
-            var name = inputFrameData.GetSampleName(index);
-
             // TODO: Remove this hack. It requires a change to the profiler backend to fix.
             if (name == "EndJob")
                 name = "NativeJob";
@@ -607,7 +620,7 @@ struct CacheFrameJob : IJob
         else if (markerId == 0)
         {
             // Workaround for older captures where the same name for 0 can be null
-            if (inputFrameData.GetSampleName(index) == null)
+            if (name == null)
                 return false;
         }
 
@@ -951,6 +964,8 @@ internal struct CacheFixupJob : IJob
     internal NativeHashMap<ulong, int> m_handleIndexLookup;
     /// <summary> Lookup from eventId to JobHandle </summary>
     internal NativeHashMap<int, ulong> m_eventHandleLookup;
+    /// <summary> Maps job handle to schedule index for O(1) lookup </summary>
+    internal NativeHashMap<ulong, int> m_handleToScheduleIndex;
 
     [ReadOnly]
     internal NativeArray<ThreadInfo> m_threads;
@@ -1068,12 +1083,19 @@ internal struct CacheFixupJob : IJob
     {
         OrderLevels(m_allEvents, m_threads, m_scheduledJobs, m_jobFlows, m_jobEventIndexList);
 
-        // Moved from CacheFrameJob as we are going to update the data needed here anyway and this gets Bursted
+        // Build handle to event index lookups (moved from CacheFrameJob, gets Bursted here)
         foreach (var info in m_jobEventIndexList)
         {
             ulong jobHandleId = info.handle.ToUlong();
             m_eventHandleLookup.TryAdd(info.eventIndex, jobHandleId);
             m_handleIndexLookup.TryAdd(jobHandleId, info.eventIndex);
+        }
+
+        // Build handle to schedule index lookup for O(1) FindJobScheduleIndex
+        for (int i = 0; i < m_scheduledJobs.Length; i++)
+        {
+            ulong handleId = m_scheduledJobs[i].handle.ToUlong();
+            m_handleToScheduleIndex.TryAdd(handleId, i);
         }
     }
 }
@@ -1475,6 +1497,7 @@ internal class FrameCache
                 jobEventIndexList = new NativeList<JobHandleEventIndex>(128, Allocator.Persistent),
                 handleIndexLookup = new NativeHashMap<ulong, int>(128, Allocator.Persistent),
                 eventHandleLookup = new NativeHashMap<int, ulong>(128, Allocator.Persistent),
+                handleToScheduleIndex = new NativeHashMap<ulong, int>(128, Allocator.Persistent),
                 jobFlows = new NativeList<JobFlow>(8, Allocator.Persistent),
             };
 
@@ -1493,6 +1516,7 @@ internal class FrameCache
                 m_jobEventIndexList = frameData.jobEventIndexList,
                 m_handleIndexLookup = frameData.handleIndexLookup,
                 m_eventHandleLookup = frameData.eventHandleLookup,
+                m_handleToScheduleIndex = frameData.handleToScheduleIndex,
                 m_threads = frameData.threads,
             };
 
@@ -1533,6 +1557,7 @@ internal class FrameCache
             cache.Value.strings512.Dispose();
             cache.Value.handleIndexLookup.Dispose();
             cache.Value.eventHandleLookup.Dispose();
+            cache.Value.handleToScheduleIndex.Dispose();
             cache.Value.threadsLookup.Dispose();
             cache.Value.jobEventIndexList.Dispose();
             cache.Value.scheduledJobs.Dispose();

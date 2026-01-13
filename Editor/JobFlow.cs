@@ -29,6 +29,25 @@ using System.Globalization;
 using UnityEngine.Events;
 
 
+/// <summary>
+/// Lookup tables built on-demand for fast dependency traversal.
+/// </summary>
+struct DependencyLookupTables : IDisposable
+{
+    /// <summary>Maps job handle to event indices (supports parallel jobs with multiple events per handle)</summary>
+    internal NativeParallelMultiHashMap<ulong, int> handleToEventIndices;
+    /// <summary>Maps job handle to handles that depend on it (reverse dependency lookup)</summary>
+    internal NativeParallelMultiHashMap<ulong, ulong> handleToDependentHandles;
+
+    public void Dispose()
+    {
+        if (handleToEventIndices.IsCreated)
+            handleToEventIndices.Dispose();
+        if (handleToDependentHandles.IsCreated)
+            handleToDependentHandles.Dispose();
+    }
+}
+
 [BurstCompile()]
 struct GenerateDepenedicesMeshJob : IJob
 {
@@ -71,6 +90,10 @@ struct GenerateDepenedicesMeshJob : IJob
 
     [ReadOnly]
     internal NativeList<JobFlow> m_jobFlows;
+
+    // Optimized lookup table for schedule index
+    [ReadOnly]
+    internal NativeHashMap<ulong, int> m_handleToScheduleIndex;
 
     [ReadOnly]
     internal float m_timeOffset;
@@ -144,22 +167,17 @@ struct GenerateDepenedicesMeshJob : IJob
 
 
     /// <summary>
-    /// Find the index of the schedeling information for a job.
+    /// Find the index of the schedeling information for a job. O(1) hashmap lookup.
     /// </summary>
     int FindJobScheduleIndex(ulong jobHandle)
     {
-        // TODO: Looping over all job infos like this isn't ideal. We should have a hashmap for this instead.
-        for (int jobInfoIndex = 0, count = m_scheduledJobs.Length; jobInfoIndex < count; ++jobInfoIndex)
-        {
-            if (m_scheduledJobs[jobInfoIndex].handle.ToUlong() == jobHandle)
-                return jobInfoIndex;
-        }
-
+        if (m_handleToScheduleIndex.TryGetValue(jobHandle, out int index))
+            return index;
         return -1;
     }
 
     /// <summary>
-    /// Gathers events that has jobHandle as dependency. i.e:
+    /// Gathers events that has jobHandle as dependency. Uses pre-built reverse dependency lookup.
     ///
     ///   |______________ 2
     ///   |______________ 3
@@ -169,28 +187,19 @@ struct GenerateDepenedicesMeshJob : IJob
     ///  If 1 is sent in 2 and 3 will be collected
     ///
     /// </summary>
-    void GetEventsWithHandleAsDependency(NativeList<int> output, ulong jobHandle)
+    void GetEventsWithHandleAsDependency(NativeList<int> output, ulong jobHandle, in DependencyLookupTables tables)
     {
         output.Clear();
 
-        int totalJobCount = m_jobEventList.Length;
-
-        for (int jobInfoIndex = 0, count = m_scheduledJobs.Length; jobInfoIndex < count; ++jobInfoIndex)
+        // Use the pre-built reverse dependency lookup
+        if (tables.handleToDependentHandles.TryGetFirstValue(jobHandle, out ulong dependentHandle, out var iterator))
         {
-            ScheduledJobInfo scheduledJob = m_scheduledJobs[jobInfoIndex];
-
-            int dependencyCount = scheduledJob.dependencyCount;
-            int dependencyTableOffset = scheduledJob.dependencyTableIndex;
-            NativeSlice<InternalJobHandle> slice = new NativeSlice<InternalJobHandle>(m_dependencyTable.AsArray(), dependencyTableOffset, dependencyCount);
-
-            foreach (var handle in slice)
+            do
             {
-                if (handle.ToUlong() == jobHandle)
-                {
-                    GetEventsWithJobHandle(output, scheduledJob.handle);
-                    break;
-                }
+                // Get all events for this dependent handle
+                GetEventsWithJobHandle(output, new InternalJobHandle(dependentHandle), tables);
             }
+            while (tables.handleToDependentHandles.TryGetNextValue(out dependentHandle, ref iterator));
         }
     }
 
@@ -199,29 +208,29 @@ struct GenerateDepenedicesMeshJob : IJob
         if (index == -1)
             return new InternalJobHandle();
 
-        for (int i = 0, count = m_jobEventList.Length; i < count; ++i)
-        {
-            if (m_jobEventList[i].eventIndex == index)
-                return m_jobEventList[i].handle;
-        }
+        // Use pre-built hashmap for O(1) lookup
+        if (m_eventHandleLookup.TryGetValue(index, out ulong handle))
+            return new InternalJobHandle(handle);
 
         return new InternalJobHandle();
     }
 
-    NativeList<int> GatherDepedencyJobsFromHandle(ulong jobHandle)
+    NativeList<int> GatherDepedencyJobsFromHandle(ulong jobHandle, in DependencyLookupTables tables)
     {
         int scheduleIndex = FindJobScheduleIndex(jobHandle);
 
         if (scheduleIndex == -1)
             return new NativeList<int>(0, Allocator.Temp);
 
-        return GatherDepedencyJobs(scheduleIndex);
+        return GatherDepedencyJobs(scheduleIndex, tables);
     }
 
     /// <summary>
     /// Collect all the jobs that has a dependency on the job with the given index.
+    /// Uses pre-built multi-hashmap for O(d*k) lookup where d is dependency count
+    /// and k is events per handle.
     /// </summary>
-    NativeList<int> GatherDepedencyJobs(int jobInfoIndex)
+    NativeList<int> GatherDepedencyJobs(int jobInfoIndex, in DependencyLookupTables tables)
     {
         ScheduledJobInfo info = m_scheduledJobs[jobInfoIndex];
 
@@ -229,19 +238,19 @@ struct GenerateDepenedicesMeshJob : IJob
         int dependencyTableOffset = info.dependencyTableIndex;
 
         var events = new NativeList<int>(m_jobEventList.Length, Allocator.Temp);
-        var dependencyTable = new NativeSlice<InternalJobHandle>(m_dependencyTable.AsArray(), dependencyTableOffset, dependencyCount);
 
-        foreach (var h in dependencyTable)
+        for (int i = 0; i < dependencyCount; i++)
         {
-            ulong handle = h.ToUlong();
+            ulong handle = m_dependencyTable[dependencyTableOffset + i].ToUlong();
 
-            // TODO: Looping over all job infos like this isn't ideal. We should have a hashmap for this instead.
-            foreach (var t in m_jobEventList)
+            // Use pre-built hashmap for O(k) lookup instead of O(n)
+            if (tables.handleToEventIndices.TryGetFirstValue(handle, out int eventIndex, out var iterator))
             {
-                if (t.handle.ToUlong() != handle)
-                    continue;
-
-                events.Add(t.eventIndex);
+                do
+                {
+                    events.Add(eventIndex);
+                }
+                while (tables.handleToEventIndices.TryGetNextValue(out eventIndex, ref iterator));
             }
         }
 
@@ -449,27 +458,28 @@ struct GenerateDepenedicesMeshJob : IJob
     }
 
     /// <summary>
-    /// Get a list of all events with a specific JobHandle. We need to do this because
-    /// several events can have the same JobID when being a parallel job
+    /// Get a list of all events with a specific JobHandle. Uses pre-built multi-hashmap
+    /// for O(k) lookup where k is the number of events (handles parallel jobs).
     /// </summary>
-    void GetEventsWithJobHandle(NativeList<int> output, InternalJobHandle handle)
+    void GetEventsWithJobHandle(NativeList<int> output, InternalJobHandle handle, in DependencyLookupTables tables)
     {
         ulong jobId = handle.ToUlong();
 
-        foreach (var jobEvent in m_jobEventList)
+        if (tables.handleToEventIndices.TryGetFirstValue(jobId, out int eventIndex, out var iterator))
         {
-            if (jobEvent.handle.ToUlong() != jobId)
-                continue;
-
-            output.AddNoResize(jobEvent.eventIndex);
+            do
+            {
+                output.AddNoResize(eventIndex);
+            }
+            while (tables.handleToEventIndices.TryGetNextValue(out eventIndex, ref iterator));
         }
     }
 
-    void DrawEventsByInfo(JobFlow info, in NativeArray<float> tempOffsets, int index, ref StartCompleteInfo startCompleteInfo, ref int waitedOnIndex)
+    void DrawEventsByInfo(JobFlow info, in NativeArray<float> tempOffsets, int index, ref StartCompleteInfo startCompleteInfo, ref int waitedOnIndex, in DependencyLookupTables tables)
     {
         NativeList<int> events = new NativeList<int>(m_jobEventList.Length, Allocator.Temp);
 
-        GetEventsWithJobHandle(events, info.handle);
+        GetEventsWithJobHandle(events, info.handle, tables);
 
         Color32 color = info.getColor();
 
@@ -536,7 +546,7 @@ struct GenerateDepenedicesMeshJob : IJob
         };
     }
 
-    void RenderDependantJobsRecursive(NativeHashSet<int> visitedEvents, in NativeArray<float> tempOffsets, NativeList<int> dependantEvents, ulong jobHandle, int selectedEvent, int level)
+    void RenderDependantJobsRecursive(NativeHashSet<int> visitedEvents, in NativeArray<float> tempOffsets, NativeList<int> dependantEvents, ulong jobHandle, int selectedEvent, int level, in DependencyLookupTables tables)
     {
         DrawDependantJobs(tempOffsets, dependantEvents, selectedEvent);
 
@@ -551,8 +561,8 @@ struct GenerateDepenedicesMeshJob : IJob
                 if (m_eventHandleLookup.TryGetValue(currentEvent, out outHandle))
                 {
                     NativeList<int> events = new NativeList<int>(m_jobEventList.Length, Allocator.Temp);
-                    GetEventsWithHandleAsDependency(events, outHandle);
-                    RenderDependantJobsRecursive(visitedEvents, tempOffsets, events, outHandle, currentEvent, level + 1);
+                    GetEventsWithHandleAsDependency(events, outHandle, tables);
+                    RenderDependantJobsRecursive(visitedEvents, tempOffsets, events, outHandle, currentEvent, level + 1, tables);
                     events.Dispose();
                 }
 
@@ -561,7 +571,7 @@ struct GenerateDepenedicesMeshJob : IJob
         }
     }
 
-    void RenderDependencyJobsRecursive(NativeHashSet<int> visitedEvents, in NativeArray<float> tempOffsets, NativeList<int> dependantEvents, ulong jobHandle, int selectedEvent, int level)
+    void RenderDependencyJobsRecursive(NativeHashSet<int> visitedEvents, in NativeArray<float> tempOffsets, NativeList<int> dependantEvents, ulong jobHandle, int selectedEvent, int level, in DependencyLookupTables tables)
     {
         DrawDependencyJobs(tempOffsets, dependantEvents, selectedEvent);
 
@@ -575,8 +585,8 @@ struct GenerateDepenedicesMeshJob : IJob
             {
                 if (m_eventHandleLookup.TryGetValue(currentEvent, out outHandle))
                 {
-                    NativeList<int> events = GatherDepedencyJobsFromHandle(outHandle);
-                    RenderDependencyJobsRecursive(visitedEvents, tempOffsets, events, outHandle, currentEvent, level + 1);
+                    NativeList<int> events = GatherDepedencyJobsFromHandle(outHandle, tables);
+                    RenderDependencyJobsRecursive(visitedEvents, tempOffsets, events, outHandle, currentEvent, level + 1, tables);
                     events.Dispose();
                 }
 
@@ -584,10 +594,47 @@ struct GenerateDepenedicesMeshJob : IJob
             }
         }
     }
+
+    DependencyLookupTables BuildLookupTables()
+    {
+        var tables = new DependencyLookupTables();
+
+        // Build handle -> event indices lookup (for parallel jobs with multiple events)
+        tables.handleToEventIndices = new NativeParallelMultiHashMap<ulong, int>(m_jobEventList.Length, Allocator.Temp);
+        foreach (var jobEvent in m_jobEventList)
+        {
+            tables.handleToEventIndices.Add(jobEvent.handle.ToUlong(), jobEvent.eventIndex);
+        }
+
+        // Build reverse dependency lookup: handle -> handles that depend on it
+        int totalDeps = 0;
+        for (int i = 0; i < m_scheduledJobs.Length; i++)
+            totalDeps += m_scheduledJobs[i].dependencyCount;
+
+        tables.handleToDependentHandles = new NativeParallelMultiHashMap<ulong, ulong>(math.max(totalDeps, 1), Allocator.Temp);
+        for (int i = 0; i < m_scheduledJobs.Length; i++)
+        {
+            ScheduledJobInfo job = m_scheduledJobs[i];
+            ulong jobHandle = job.handle.ToUlong();
+            int depCount = job.dependencyCount;
+            int depOffset = job.dependencyTableIndex;
+            for (int d = 0; d < depCount; d++)
+            {
+                ulong depHandle = m_dependencyTable[depOffset + d].ToUlong();
+                tables.handleToDependentHandles.Add(depHandle, jobHandle);
+            }
+        }
+
+        return tables;
+    }
+
     public void Execute()
     {
         if (m_selectedEvent.state != JobSelection.State.Selected)
             return;
+
+        // Build lookup tables once at start for O(1) lookups during rendering
+        var lookupTables = BuildLookupTables();
 
         NativeArray<float> tempOffsets = new NativeArray<float>(m_threads.Length, Allocator.Temp);
 
@@ -623,7 +670,7 @@ struct GenerateDepenedicesMeshJob : IJob
                 if (info.eventIndex != selectedEventIndex)
                     continue;
 
-                DrawEventsByInfo(info, tempOffsets, index, ref startCompleteInfo, ref waitedOnIndex);
+                DrawEventsByInfo(info, tempOffsets, index, ref startCompleteInfo, ref waitedOnIndex, lookupTables);
 
                 break;
             }
@@ -637,7 +684,10 @@ struct GenerateDepenedicesMeshJob : IJob
             int jobScheduleIndex = FindJobScheduleIndex(jobHandle);
 
             if (jobScheduleIndex == -1)
+            {
+                lookupTables.Dispose();
                 return;
+            }
 
             for (int index = 0, count = m_jobFlows.Length; index < count; ++index)
             {
@@ -646,13 +696,13 @@ struct GenerateDepenedicesMeshJob : IJob
                 if (info.handle.ToUlong() != jobHandle)
                     continue;
 
-                DrawEventsByInfo(info, tempOffsets, index, ref startCompleteInfo, ref waitedOnIndex);
+                DrawEventsByInfo(info, tempOffsets, index, ref startCompleteInfo, ref waitedOnIndex, lookupTables);
             }
 
             var dependantEvents = new NativeList<int>(m_jobEventList.Length, Allocator.Temp);
-            var dependencyEvents = GatherDepedencyJobs(jobScheduleIndex);
+            var dependencyEvents = GatherDepedencyJobs(jobScheduleIndex, lookupTables);
 
-            GetEventsWithHandleAsDependency(dependantEvents, jobHandle);
+            GetEventsWithHandleAsDependency(dependantEvents, jobHandle, lookupTables);
 
             // Only output these lists if it's for the current selected frame and we aren't hovering over the event
             if (m_frameIndex == m_selectedEvent.frameIndex && !m_selectedEvent.hover)
@@ -667,12 +717,12 @@ struct GenerateDepenedicesMeshJob : IJob
 
                 if (m_settings.showDependantOn)
                 {
-                    RenderDependantJobsRecursive(visitedEvents, tempOffsets, dependantEvents, jobHandle, m_selectedEvent.eventIndex, 0);
+                    RenderDependantJobsRecursive(visitedEvents, tempOffsets, dependantEvents, jobHandle, m_selectedEvent.eventIndex, 0, lookupTables);
                     visitedEvents.Clear();
                 }
 
                 if (m_settings.showDependsOn)
-                    RenderDependencyJobsRecursive(visitedEvents, tempOffsets, dependencyEvents, jobHandle, m_selectedEvent.eventIndex, 0);
+                    RenderDependencyJobsRecursive(visitedEvents, tempOffsets, dependencyEvents, jobHandle, m_selectedEvent.eventIndex, 0, lookupTables);
 
                 visitedEvents.Dispose();
             }
@@ -688,6 +738,7 @@ struct GenerateDepenedicesMeshJob : IJob
         m_startCompleteInfo[0] = startCompleteInfo;
 
         tempOffsets.Dispose();
+        lookupTables.Dispose();
     }
 }
 

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
 using UnityEngine.UIElements;
+using UnityEditor.UIElements;
 using UnityEditor.Search;
 using System;
 
@@ -10,14 +11,14 @@ internal class Filter
 {
     // List of filters that matches marker names.
     NativeHashSet<int> m_filterIds;
-    TextField m_filter;
+    ToolbarSearchField m_filter;
     FrameCache m_frameCache;
     string m_oldValue;
     bool m_useFilter = false;
     bool m_hasChanged = false;
     int m_oldSelectedFrame = -1;
 
-    internal Filter(FrameCache frameCache, TextField filter)
+    internal Filter(FrameCache frameCache, ToolbarSearchField filter)
     {
         m_frameCache = frameCache;
         m_filter = filter;

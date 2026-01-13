@@ -187,6 +187,7 @@ internal struct TimelineSettings
     internal bool showCompletedByNoWait;
     internal bool verticalZoom;
     internal bool zoomOnEventHover;
+    internal bool showFoldedGroupPreview;
     /// When an element is smaller than this we expand the hit area to make it easier to select
     internal const float ExpandWidthHitArea = 4.0f;
     /// This is the total size of the hit area when we expand it (in pixels)
@@ -415,6 +416,7 @@ struct GenerateMeshContext
 {
     internal PrimitiveRenderer renderer;
     internal JobHandle jobHandle;
+    internal NativeHashMap<ulong, int> visibleDepthOutput;
 }
 
 /// <summary>
@@ -458,6 +460,10 @@ struct GenerateMeshJob : IJob
 
     const float kStartJobEvtSpacing = 1.5f;
 
+    // Background color for fading non-selected frames (passed in from TimelineBarView)
+    [ReadOnly]
+    internal Color32 m_backgroundColor;
+
     //[ReadOnly]
     //internal NativeList<JobInfo> m_jobsInfo;
 
@@ -465,6 +471,11 @@ struct GenerateMeshJob : IJob
 
     [ReadOnly]
     internal NativeHashSet<int> m_idFilters;
+
+    /// <summary>
+    /// Output: max visible depth per thread (threadId -> maxLevel+1)
+    /// </summary>
+    internal NativeHashMap<ulong, int> m_visibleDepthOutput;
 
     internal PrimitiveRenderer m_renderer;
 
@@ -488,7 +499,8 @@ struct GenerateMeshJob : IJob
                 color = Color32.Lerp(color, Color.black, 0.4f);
         }
 
-        color = Color32.Lerp(color, Color.black, m_frameIndex.fade);
+        // Fade non-selected frames toward background color (not black)
+        color = Color32.Lerp(color, m_backgroundColor, m_frameIndex.fade);
 
         // this ensures that we always have at least 2 pixel wide quads to reduce flickering
         if ((c1.x - c0.x) < 2.0f)
@@ -509,7 +521,8 @@ struct GenerateMeshJob : IJob
                 color = Color32.Lerp(color, Color.black, 0.4f);
         }
 
-        color = Color32.Lerp(color, Color.black, m_frameIndex.fade);
+        // Fade non-selected frames toward background color (not black)
+        color = Color32.Lerp(color, m_backgroundColor, m_frameIndex.fade);
 
         m_renderer.DrawArrowWithSize(pos, color, size, direction);
     }
@@ -522,6 +535,7 @@ struct GenerateMeshJob : IJob
         float2 mergeCorner = new float2(0.0f);
         ushort prevLevel = 0;
         int prevCategory = 0;
+        bool prevIsFiltered = false;
 
         var jobSelection = m_jobSelection[0];
 
@@ -531,12 +545,22 @@ struct GenerateMeshJob : IJob
         // Get animation progress for smooth clipping
         ThreadPosition threadPos;
         float currentMaxDepth = float.MaxValue;
+        bool isFoldedPreview = false;
+        float previewHeightMultiplier = 1.0f;
 
         if (m_threadOffsets.TryGetValue(threadInfo.threadId, out threadPos))
         {
             // Calculate current visible depth based on animation progress
             float maxDepth = (float)threadPos.depth;
             currentMaxDepth = math.lerp(1.0f, maxDepth, threadPos.animationProgress);
+
+            // Check for folded preview mode
+            isFoldedPreview = threadPos.visibility == ThreadVisibility.Preview;
+            if (isFoldedPreview)
+            {
+                currentMaxDepth = 1.0f; // Only render level 0 events in preview
+                previewHeightMultiplier = threadPos.previewHeight;
+            }
         }
 
         for (int eventIndex = threadInfo.eventStart; eventIndex < threadInfo.eventEnd;)
@@ -556,6 +580,9 @@ struct GenerateMeshJob : IJob
             // Clip bar height if partially visible (event is being clipped)
             float visibleHeight = math.min(1.0f, currentMaxDepth - profEvent.level);
             sizeLocal.y *= visibleHeight;
+
+            // Apply height multiplier for folded preview mode
+            sizeLocal.y *= previewHeightMultiplier;
             float2 cornerLocal = posLocal + sizeLocal;
 
             float2 pos = (posLocal * scale) + trans;
@@ -572,12 +599,20 @@ struct GenerateMeshJob : IJob
                 continue;
             }
 
-            // Event filtering
-            if (m_useFilter && !m_idFilters.Contains(profEvent.markerId))
+            // Track max visible depth for this thread
+            int eventDepth = profEvent.level + 1;
+            if (m_visibleDepthOutput.TryGetValue(threadInfo.threadId, out int currentMax))
             {
-                eventIndex++;
-                continue;
+                if (eventDepth > currentMax)
+                    m_visibleDepthOutput[threadInfo.threadId] = eventDepth;
             }
+            else
+            {
+                m_visibleDepthOutput.TryAdd(threadInfo.threadId, eventDepth);
+            }
+
+            // Event filtering - dim filtered events instead of hiding them
+            bool isFilteredOut = m_useFilter && !m_idFilters.Contains(profEvent.markerId);
 
             // If we have a job start event we make it wider to make it more visible and easier to select.
             bool isScheduleJobEvent = scheduleJobEvents.IsSet(eventIndex);
@@ -621,6 +656,7 @@ struct GenerateMeshJob : IJob
                     mergeCorner = new float2(pos.x + 1.0f, corner.y);
                     prevLevel = profEvent.level;
                     prevCategory = profEvent.categoryId;
+                    prevIsFiltered = isFilteredOut;
                     eventIndex++;
                     continue;
                 }
@@ -642,8 +678,8 @@ struct GenerateMeshJob : IJob
                 catId = prevCategory;
             }
 
-            // Only hover if right mouse button isn't down
-            if (m_mouseState.isRightDown == 0)
+            // Only hover if right mouse button isn't down and event is not filtered out
+            if (m_mouseState.isRightDown == 0 && !isFilteredOut)
             {
                 float2 mousePos = m_mouseState.pos;
 
@@ -697,12 +733,27 @@ struct GenerateMeshJob : IJob
             {
                 float arrowSize = 6.0f;
                 Color32 color = JobFlow.getScheduleColor();
-                DrawQuad(c0, c1, color, eventIndex, false);
+
+                // Apply dimming for preview mode (folded group compact view)
+                if (isFoldedPreview)
+                    color = Color32.Lerp(color, Color.black, 0.4f);
+
+                // Apply grayscale + dimming for filtered out events
+                if (isFilteredOut)
+                {
+                    byte luminance = (byte)(0.299f * color.r + 0.587f * color.g + 0.114f * color.b);
+                    color = new Color32(luminance, luminance, luminance, color.a);
+                    color = Color32.Lerp(color, Color.black, 0.5f);
+                }
+
+                // Pass true as isColorReplaced when filtered or preview to skip selection dimming in DrawQuad
+                bool skipSelectionDimming = isFoldedPreview || isFilteredOut;
+                DrawQuad(c0, c1, color, eventIndex, skipSelectionDimming);
 
                 float2 arrowPos = new float2(c1.x - kStartJobEvtSpacing, c1.y - arrowSize + 1.0f);
 
-                // If we haven't selected this job we draw an arrow
-                if (!(jobSelection.state == JobSelection.State.Selected && jobSelection.eventIndex == eventIndex))
+                // If we haven't selected this job we draw an arrow (skip in preview mode and filtered events)
+                if (!isFoldedPreview && !isFilteredOut && !(jobSelection.state == JobSelection.State.Selected && jobSelection.eventIndex == eventIndex))
                     DrawArrow(arrowPos, color, arrowSize, PrimitiveRenderer.ArrowDirection.Down, eventIndex);
             }
             else
@@ -710,10 +761,24 @@ struct GenerateMeshJob : IJob
                 // Draw the bar
                 Color32 color = m_markerColors[catId];
 
+                // Apply dimming for preview mode (folded group compact view)
+                if (isFoldedPreview)
+                    color = Color32.Lerp(color, Color.black, 0.4f);
+
+                // Apply grayscale + dimming for filtered out events
+                if (isFilteredOut)
+                {
+                    byte luminance = (byte)(0.299f * color.r + 0.587f * color.g + 0.114f * color.b);
+                    color = new Color32(luminance, luminance, luminance, color.a);
+                    color = Color32.Lerp(color, Color.black, 0.5f);
+                }
+
+                // Pass true as isColorReplaced when filtered or preview to skip selection dimming in DrawQuad
+                bool skipSelectionDimming = isFoldedPreview || isFilteredOut;
                 if (state == MergeState.Default)
-                    DrawQuad(c0, c1, color, eventIndex, false);
+                    DrawQuad(c0, c1, color, eventIndex, skipSelectionDimming);
                 else
-                    DrawQuad(c0, c1, color, -1, false);
+                    DrawQuad(c0, c1, color, -1, skipSelectionDimming);
             }
 
             if (state == MergeState.MergeBar)
@@ -725,7 +790,22 @@ struct GenerateMeshJob : IJob
         // if we are here and we ar still in merge state we exited the loop above without drawing the quad so
         // we need to do it here
         if (state == MergeState.MergeBar)
-            DrawQuad(mergeStartCorner, mergeCorner, m_markerColors[prevCategory], 0, false);
+        {
+            Color32 mergeColor = m_markerColors[prevCategory];
+            if (isFoldedPreview)
+                mergeColor = Color32.Lerp(mergeColor, Color.black, 0.4f);
+
+            // Apply grayscale + dimming for filtered out events
+            if (prevIsFiltered)
+            {
+                byte luminance = (byte)(0.299f * mergeColor.r + 0.587f * mergeColor.g + 0.114f * mergeColor.b);
+                mergeColor = new Color32(luminance, luminance, luminance, mergeColor.a);
+                mergeColor = Color32.Lerp(mergeColor, Color.black, 0.5f);
+            }
+
+            bool skipSelectionDimming = isFoldedPreview || prevIsFiltered;
+            DrawQuad(mergeStartCorner, mergeCorner, mergeColor, 0, skipSelectionDimming);
+        }
 
         m_jobSelection[0] = jobSelection;
     }
@@ -970,6 +1050,10 @@ class TickLabels
 /// Displays the rectanges bars
 class TimelineBarView : VisualElement
 {
+    // Background color of the timeline area - used for fading non-selected frames
+    // Must match the background-color in timeline.uxml (rgb(40, 40, 40))
+    internal static readonly Color32 kBackgroundColor = new Color32(40, 40, 40, 255);
+
     FrameCache m_frameCache;
 
     internal ThreadLabels m_threads;
@@ -981,8 +1065,7 @@ class TimelineBarView : VisualElement
     internal Scroller m_verticalScroller;
     internal MinMaxSlider m_horizontalScroller;
     internal Stats m_stats;
-    internal DisplayDropdownMenu m_displayDropdownMenu;
-    internal ExperimentalSettings m_experimentalSettings;
+    internal SettingsMenu m_settingsMenu;
     // Settings
     internal DropdownField m_paralleJobsNavigation;
     private VisualElement m_timeline;
@@ -991,6 +1074,8 @@ class TimelineBarView : VisualElement
     internal JobSelection m_jobSelection;
     internal NativeHashMap<ulong, ThreadPosition> m_threadOffsets;
     internal bool m_isAnimating; // True when any thread is animating
+    internal const int kMinVisibleDepth = 1; // Minimum height is 1 row (top-level events always visible)
+    internal NativeHashMap<ulong, int> m_collectedVisibleDepths; // Merged visible depths from all frame jobs
     internal float m_totalThreadHeight; // Total height in bar units (calculated by CalculateThreadOffsets)
     internal DependenciesInfo m_dependencyInfo;
     internal TimelineSettings m_settings;
@@ -1062,6 +1147,7 @@ class TimelineBarView : VisualElement
 
         rootVisualElement.style.flexGrow = 1;
         style.flexGrow = 1;
+        style.backgroundColor = new Color(0.22f, 0.22f, 0.22f, 1.0f);
 
         Add(rootVisualElement);
 
@@ -1094,6 +1180,7 @@ class TimelineBarView : VisualElement
 
         m_settings = new TimelineSettings();
         m_threadOffsets = new NativeHashMap<ulong, ThreadPosition>(1, Allocator.Persistent);
+        m_collectedVisibleDepths = new NativeHashMap<ulong, int>(64, Allocator.Persistent);
         m_isAnimating = false;
 
         m_dependencyInfo.startComplete = new NativeArray<StartCompleteInfo>(1, Allocator.Persistent);
@@ -1166,11 +1253,9 @@ class TimelineBarView : VisualElement
         m_settings.showCompletedByWait = true;
         m_settings.showCompletedByNoWait = true;
 
-        VisualElement top_bar = rootView.Query<VisualElement>("top_grouping").First();
-        m_displayDropdownMenu = new DisplayDropdownMenu(m_settings);
-        m_displayDropdownMenu.CreateButton(top_bar);
-        m_experimentalSettings = new ExperimentalSettings();
-        m_experimentalSettings.CreateButton(top_bar);
+        VisualElement settingsContainer = rootView.Query<VisualElement>("settings_menu_container").First();
+        m_settingsMenu = new SettingsMenu();
+        m_settingsMenu.CreateKebabButton(settingsContainer);
 
         parent.Add(this);
     }
@@ -1205,6 +1290,7 @@ class TimelineBarView : VisualElement
         m_dependencyInfo.dependantJobs.Dispose();
         m_threadGroupOrder.Dispose();
         m_threadOffsets.Dispose();
+        m_collectedVisibleDepths.Dispose();
         m_profilerColors.Dispose();
         k_LookupProfilerColors.Dispose();
 
@@ -1260,11 +1346,10 @@ class TimelineBarView : VisualElement
         float deltaTime = (float)(currentTimeSinceStartup - m_lastTimeSinceStartup);
         m_lastTimeSinceStartup = currentTimeSinceStartup;
 
-        // Update fold animations
-        if (m_isAnimating)
-            UpdateAnimations(deltaTime);
-
         WaitPreviousFrameJobs();
+
+        // Update fold and visible depth animations (must be after WaitPreviousFrameJobs which collects visible depths)
+        UpdateAnimations(deltaTime);
 
         if (m_nextFrame == -1)
         {
@@ -1279,9 +1364,16 @@ class TimelineBarView : VisualElement
         m_filter.Update(m_nextFrame);
         m_stats.Update();
 
-        m_settings = m_displayDropdownMenu.TimelineSettings;
-        m_settings.verticalZoom = m_experimentalSettings.VerticalZoom;
-        m_settings.zoomOnEventHover = m_experimentalSettings.ZoomOnEventHover;
+        // Sync settings from the settings menu
+        m_settings.zoomOnEventFocus = m_settingsMenu.ZoomOnEventFocus;
+        m_settings.showDependsOn = m_settingsMenu.ShowDependsOn;
+        m_settings.showDependantOn = m_settingsMenu.ShowDependantOn;
+        m_settings.showCompletedByWait = m_settingsMenu.ShowCompletedByWait;
+        m_settings.showCompletedByNoWait = m_settingsMenu.ShowCompletedByNoWait;
+        m_settings.showFullDependencyChain = m_settingsMenu.ShowFullDependencyChain;
+        m_settings.verticalZoom = m_settingsMenu.VerticalZoom;
+        m_settings.zoomOnEventHover = m_settingsMenu.ZoomOnEventHover;
+        m_settings.showFoldedGroupPreview = m_settingsMenu.ShowFoldedGroupPreview;
         m_settings.barSize = m_barSize;
         m_settings.invYBarSize = 1.0f - (1.0f / m_settings.barSize);
         m_zoomArea.verticalZoom = m_settings.verticalZoom;
@@ -1515,8 +1607,8 @@ class TimelineBarView : VisualElement
 
             float frameTime = frame.info[0].frameTime;
 
-            // Opacity value for rendering the not selected frames darker
-            float fade = (frameIndex == m_selectedFrameRange.active) ? 0.0f : 0.5f;
+            // Opacity value for rendering the not selected frames more faded toward background
+            float fade = (frameIndex == m_selectedFrameRange.active) ? 0.0f : 0.8f;
 
             var fi = new FrameIndex
             {
@@ -1586,8 +1678,11 @@ class TimelineBarView : VisualElement
         bool isFolded = !isMainThread;
         float animationProgress = isMainThread ? 1.0f : 0.0f;
 
-        // Preserve existing user state if available
-        if (preservedStates.TryGetValue(threadId, out ThreadPosition existingPos))
+        // Preserve existing user state if available, but not from Preview mode.
+        // Preview mode sets isFolded=true for compact display, which shouldn't
+        // persist when the group is unfolded.
+        if (preservedStates.TryGetValue(threadId, out ThreadPosition existingPos) &&
+            existingPos.visibility != ThreadVisibility.Preview)
         {
             isFolded = existingPos.isFolded;
             animationProgress = existingPos.animationProgress;
@@ -1607,18 +1702,35 @@ class TimelineBarView : VisualElement
             ulong threadId = keys[i];
             if (m_threadOffsets.TryGetValue(threadId, out ThreadPosition threadPos))
             {
-                float targetProgress = threadPos.isFolded ? 0.0f : 1.0f;
+                bool threadAnimating = false;
 
+                // Fold/unfold animation
+                float targetProgress = threadPos.isFolded ? 0.0f : 1.0f;
                 if (math.abs(threadPos.animationProgress - targetProgress) > 0.01f)
                 {
-                    // Animate towards target
                     float step = animationSpeed * deltaTime;
                     threadPos.animationProgress = math.lerp(threadPos.animationProgress, targetProgress, step);
-
-                    // Snap to target when close enough
                     if (math.abs(threadPos.animationProgress - targetProgress) < 0.01f)
                         threadPos.animationProgress = targetProgress;
+                    threadAnimating = true;
+                }
 
+                // Visible depth animation
+                float targetVisibleDepth = kMinVisibleDepth;
+                if (m_collectedVisibleDepths.TryGetValue(threadId, out int collected))
+                    targetVisibleDepth = math.clamp(collected, kMinVisibleDepth, threadPos.depth);
+
+                if (math.abs(threadPos.visibleDepth - targetVisibleDepth) > 0.01f)
+                {
+                    float step = animationSpeed * deltaTime;
+                    threadPos.visibleDepth = math.lerp(threadPos.visibleDepth, targetVisibleDepth, step);
+                    if (math.abs(threadPos.visibleDepth - targetVisibleDepth) < 0.01f)
+                        threadPos.visibleDepth = targetVisibleDepth;
+                    threadAnimating = true;
+                }
+
+                if (threadAnimating)
+                {
                     m_threadOffsets[threadId] = threadPos;
                     anyAnimating = true;
                 }
@@ -1653,6 +1765,27 @@ class TimelineBarView : VisualElement
             // animationProgress stays at current value, will be updated in UpdateAnimations
             m_threadOffsets[threadId] = threadPos;
             m_isAnimating = true;
+        }
+    }
+
+    /// <summary>
+    /// Calculates the preview heights (in bar units) for a folded group based on thread count.
+    /// Returns the bar height (for rendering) and offset step (bar + spacing for positioning).
+    /// </summary>
+    void CalculateFoldedPreviewHeight(int threadCount, out float barHeight, out float offsetStep)
+    {
+        const float kMinPreviewPixels = 2.0f;
+        const float kPreviewSpacingPixels = 1.0f;
+
+        if (threadCount == 1)
+        {
+            barHeight = 1.0f;
+            offsetStep = 1.0f;
+        }
+        else
+        {
+            barHeight = kMinPreviewPixels / m_barSize;
+            offsetStep = (kMinPreviewPixels + kPreviewSpacingPixels) / m_barSize;
         }
     }
 
@@ -1691,9 +1824,48 @@ class TimelineBarView : VisualElement
             // Reserve space for the group header label
             threadOffset += 1.0f;
 
-            // If group is folded, skip adding threads (we already added space for the header)
+            // If group is folded, either skip or show preview based on setting
             if (group.isFolded)
             {
+                if (m_settings.showFoldedGroupPreview)
+                {
+                    // Get thread count from the frame with most threads
+                    int previewThreadCount = 0;
+                    int previewFrameIndex = 0;
+                    for (int i = 0; i < groupsIndex.Count; ++i)
+                    {
+                        int threadCount = groupsIndex[i].group.arrayEnd - groupsIndex[i].group.arrayIndex;
+                        if (threadCount > previewThreadCount)
+                        {
+                            previewThreadCount = threadCount;
+                            previewFrameIndex = i;
+                        }
+                    }
+
+                    // Calculate preview heights per thread (bar height for rendering, offset step for positioning)
+                    CalculateFoldedPreviewHeight(previewThreadCount, out float barHeight, out float offsetStep);
+
+                    // Add threads with preview visibility
+                    int frameIndex = groupsIndex[previewFrameIndex].frameIndex;
+                    int arrayStart = groupsIndex[previewFrameIndex].group.arrayIndex;
+
+                    for (int t = 0; t < previewThreadCount; ++t)
+                    {
+                        ulong threadId = frames[frameIndex].data.threads[arrayStart + t].threadId;
+
+                        m_threadOffsets[threadId] = new ThreadPosition
+                        {
+                            visibility = ThreadVisibility.Preview,
+                            depth = 1,
+                            offset = threadOffset,
+                            isFolded = true,
+                            animationProgress = 0.0f,
+                            previewHeight = barHeight,
+                        };
+
+                        threadOffset += offsetStep;
+                    }
+                }
                 continue;
             }
 
@@ -1741,8 +1913,14 @@ class TimelineBarView : VisualElement
                     // Get or preserve existing fold state and animation progress
                     var (isFolded, animationProgress) = GetThreadFoldState(threadId, group.name, preservedStates);
 
-                    // Lerp between folded (1) and expanded (maxDepth) based on animation progress
-                    float lerpedDepth = math.lerp(1.0f, (float)maxDepth, animationProgress);
+                    // Get previous visible depth (animated value) or default to full depth
+                    float prevVisibleDepth = preservedStates.TryGetValue(threadId, out var existing)
+                        ? existing.visibleDepth
+                        : 0;
+                    float effectiveMaxDepth = prevVisibleDepth > 0 ? prevVisibleDepth : (float)maxDepth;
+
+                    // Lerp between folded (1) and expanded (effectiveMaxDepth) based on animation progress
+                    float lerpedDepth = math.lerp(1.0f, effectiveMaxDepth, animationProgress);
 
                     m_threadOffsets[threadId] = new ThreadPosition
                     {
@@ -1751,6 +1929,7 @@ class TimelineBarView : VisualElement
                         offset = threadOffset,
                         isFolded = isFolded,
                         animationProgress = animationProgress,
+                        visibleDepth = prevVisibleDepth > 0 ? prevVisibleDepth : (float)maxDepth,
                     };
 
                     threadOffset += lerpedDepth;
@@ -1810,8 +1989,14 @@ class TimelineBarView : VisualElement
                     // Get or preserve existing fold state and animation progress
                     var (isFolded, animationProgress) = GetThreadFoldState(threadInfo.threadId, group.name, preservedStates);
 
-                    // Lerp between folded (1) and expanded (maxDepth) based on animation progress
-                    float lerpedDepth = math.lerp(1.0f, (float)threadInfo.depth, animationProgress);
+                    // Get previous visible depth (animated value) or default to full depth
+                    float prevVisibleDepth = preservedStates.TryGetValue(threadInfo.threadId, out var existing)
+                        ? existing.visibleDepth
+                        : 0;
+                    float effectiveMaxDepth = prevVisibleDepth > 0 ? prevVisibleDepth : (float)threadInfo.depth;
+
+                    // Lerp between folded (1) and expanded (effectiveMaxDepth) based on animation progress
+                    float lerpedDepth = math.lerp(1.0f, effectiveMaxDepth, animationProgress);
 
                     m_threadOffsets[threadInfo.threadId] = new ThreadPosition
                     {
@@ -1820,6 +2005,7 @@ class TimelineBarView : VisualElement
                         offset = threadOffset,
                         isFolded = isFolded,
                         animationProgress = animationProgress,
+                        visibleDepth = prevVisibleDepth > 0 ? prevVisibleDepth : (float)threadInfo.depth,
                     };
 
                     threadOffset += lerpedDepth;
@@ -1935,6 +2121,7 @@ class TimelineBarView : VisualElement
             m_jobEventList = data.jobEventIndexList,
             m_handleIndexLookup = data.handleIndexLookup,
             m_eventHandleLookup = data.eventHandleLookup,
+            m_handleToScheduleIndex = data.handleToScheduleIndex,
             m_dependencyJobs = m_dependencyInfo.dependencyJobs,
             m_depedantJobs = m_dependencyInfo.dependantJobs,
             m_timeOffset = timeOffset,
@@ -1954,6 +2141,9 @@ class TimelineBarView : VisualElement
         //renderer.UpdateSize(data.events.Length);
         //m_primitiveRenderers[index] = renderer;
 
+        // Create per-job output hashmap for visible depth tracking
+        var visibleDepthOutput = new NativeHashMap<ulong, int>(data.threads.Length, Allocator.TempJob);
+
         var job = new GenerateMeshJob
         {
             m_renderer = renderer,
@@ -1969,12 +2159,15 @@ class TimelineBarView : VisualElement
             m_idFilters = m_filter.FilterIds,
             m_useFilter = m_filter.UseFilter,
             m_jobFlows = data.jobFlows,
+            m_backgroundColor = kBackgroundColor,
+            m_visibleDepthOutput = visibleDepthOutput,
         };
 
         return new GenerateMeshContext
         {
             renderer = renderer,
             jobHandle = job.Schedule(),
+            visibleDepthOutput = visibleDepthOutput,
         };
     }
 
@@ -2079,7 +2272,7 @@ class TimelineBarView : VisualElement
             m_activeMeshGenerators.Add(meshContext);
         }
 
-        m_textRenderer.PostUpdate(textHandle, infos, m_frameCache);
+        m_textRenderer.PostUpdate(textHandle, infos, m_frameCache, kBackgroundColor);
 
         frames.Dispose();
         infos.Dispose();
@@ -2087,10 +2280,41 @@ class TimelineBarView : VisualElement
     void WaitPreviousFrameJobs()
     {
         // If the UI decide to not generate any vertices it means that we need to wait for the jobs to finish and dispose the data here
-        foreach (var meshContext in m_activeMeshGenerators)
-            meshContext.jobHandle.Complete();
+        // Only collect visible depths if there are jobs to process (otherwise OnGenerateVisualContent already handled them)
+        if (m_activeMeshGenerators.Length > 0)
+        {
+            foreach (var meshContext in m_activeMeshGenerators)
+                meshContext.jobHandle.Complete();
 
-        m_activeMeshGenerators.Clear();
+            CollectVisibleDepths();
+            m_activeMeshGenerators.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Collects visible depth data from all completed mesh jobs and merges them.
+    /// Takes the max visible depth for each thread across all frame jobs.
+    /// </summary>
+    void CollectVisibleDepths()
+    {
+        m_collectedVisibleDepths.Clear();
+
+        foreach (var ctx in m_activeMeshGenerators)
+        {
+            foreach (var kvp in ctx.visibleDepthOutput)
+            {
+                if (m_collectedVisibleDepths.TryGetValue(kvp.Key, out int existing))
+                {
+                    if (kvp.Value > existing)
+                        m_collectedVisibleDepths[kvp.Key] = kvp.Value;
+                }
+                else
+                {
+                    m_collectedVisibleDepths.TryAdd(kvp.Key, kvp.Value);
+                }
+            }
+            ctx.visibleDepthOutput.Dispose();
+        }
     }
 
     void OnGenerateVisualContent(MeshGenerationContext mgc)
@@ -2103,6 +2327,7 @@ class TimelineBarView : VisualElement
             SetVertices(mgc, meshContext.renderer);
         }
 
+        CollectVisibleDepths();
         m_activeMeshGenerators.Clear();
 
         NativeList<FrameDataIndex> frames = GetActiveFrameRange();

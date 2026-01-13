@@ -12,8 +12,8 @@ using static Unity.Mathematics.math;
 /// </summary>
 internal abstract class FoldableLabel : VisualElement
 {
-    internal TextElement m_textElement;
-    internal Button m_foldButton;
+    internal Foldout m_foldout;
+    private Toggle m_toggle;
 
     protected FoldableLabel(string text, bool isBold = false)
     {
@@ -22,51 +22,56 @@ internal abstract class FoldableLabel : VisualElement
         style.flexGrow = 1.0f;
         style.flexDirection = FlexDirection.Row;
 
-        // Fold button (arrow)
-        m_foldButton = new Button();
-        m_foldButton.text = "▼"; // Expanded by default
-        m_foldButton.style.width = 16;
-        m_foldButton.style.height = 16;
-        m_foldButton.style.fontSize = 10;
-        m_foldButton.style.paddingLeft = 0;
-        m_foldButton.style.paddingRight = 0;
-        m_foldButton.style.paddingTop = 0;
-        m_foldButton.style.paddingBottom = 0;
-        m_foldButton.style.marginLeft = 0;
-        m_foldButton.style.marginRight = 2;
-        Add(m_foldButton);
-
-        // Text label
-        m_textElement = new TextElement();
-        m_textElement.text = text;
-        m_textElement.style.flexGrow = 1;
+        m_foldout = new Foldout();
+        m_foldout.text = text;
+        m_foldout.value = true; // Expanded by default
         if (isBold)
-            m_textElement.style.unityFontStyleAndWeight = FontStyle.Bold;
-        Add(m_textElement);
+            m_foldout.style.unityFontStyleAndWeight = FontStyle.Bold;
+        Add(m_foldout);
+
+        // Cache the toggle element for showing/hiding
+        m_toggle = m_foldout.Q<Toggle>();
     }
 
     internal string text
     {
-        get => m_textElement.text;
-        set => m_textElement.text = value;
+        get => m_foldout.text;
+        set => m_foldout.text = value;
+    }
+
+    /// <summary>
+    /// Shows or hides the fold toggle. When hidden, only the label text is displayed.
+    /// </summary>
+    internal void SetFoldable(bool foldable)
+    {
+        if (m_toggle != null)
+        {
+            m_toggle.style.display = foldable ? DisplayStyle.Flex : DisplayStyle.None;
+        }
     }
 }
 
 internal class GroupLabel : FoldableLabel
 {
     internal FixedString128Bytes m_groupName;
+    internal System.Action<FixedString128Bytes> m_onFoldToggled;
 
     internal GroupLabel(string text) : base(text, isBold: true)
     {
+        // Register callback once - it will use the current m_groupName value
+        m_foldout.RegisterValueChangedCallback(evt => m_onFoldToggled?.Invoke(m_groupName));
     }
 }
 
 internal class ThreadLabel : FoldableLabel
 {
     internal ulong m_threadId;
+    internal System.Action<ulong> m_onFoldToggled;
 
     internal ThreadLabel(string text) : base(text, isBold: false)
     {
+        // Register callback once - it will use the current m_threadId value
+        m_foldout.RegisterValueChangedCallback(evt => m_onFoldToggled?.Invoke(m_threadId));
     }
 }
 
@@ -97,6 +102,19 @@ internal class ThreadLabels : VisualElement
     internal void SetGroupFoldCallback(System.Action<FixedString128Bytes> callback)
     {
         m_onGroupFoldToggled = callback;
+    }
+
+    /// <summary>
+    /// Converts internal group names to display names.
+    /// </summary>
+    static string GetGroupDisplayName(in FixedString128Bytes name)
+    {
+        // Convert singular to plural for better readability
+        if (name == "Job")
+            return "Jobs";
+        if (name == "Background Job")
+            return "Background Jobs";
+        return name.ToString();
     }
 
     void OnThreadFoldButtonClicked(ulong threadId)
@@ -164,10 +182,22 @@ internal class ThreadLabels : VisualElement
 
         float y = resolvedStyle.transformOrigin.y;
 
+        // Build a set of thread IDs that are alone in their group (no need for fold toggle)
+        HashSet<ulong> singleThreadGroupIds = new HashSet<ulong>();
+        foreach (var group in frameData.threadGroups)
+        {
+            int threadCount = group.arrayEnd - group.arrayIndex;
+            if (threadCount == 1)
+            {
+                singleThreadGroupIds.Add(frameData.threads[group.arrayIndex].threadId);
+            }
+        }
+
         // Ensure we have enough group labels
         for (int i = m_groupLabels.Count; i < threadGroupOrder.Length; ++i)
         {
             var label = new GroupLabel("");
+            label.m_onFoldToggled = OnGroupFoldButtonClicked;
             m_groupLabels.Add(label);
             Add(label);
         }
@@ -176,6 +206,7 @@ internal class ThreadLabels : VisualElement
         for (int i = m_threadLabels.Count; i < frameData.threads.Length; ++i)
         {
             var label = new ThreadLabel("");
+            label.m_onFoldToggled = OnThreadFoldButtonClicked;
             m_threadLabels.Add(label);
             Add(label);
         }
@@ -191,24 +222,30 @@ internal class ThreadLabels : VisualElement
             {
                 ThreadLabel label = m_threadLabels[threadLabelIndex];
 
+                // Hide labels for threads in preview mode (folded group compact view)
+                if (threadPos.visibility == ThreadVisibility.Preview)
+                {
+                    label.style.visibility = Visibility.Hidden;
+                    threadLabelIndex++;
+                    continue;
+                }
+
                 if (label.text != thread.name)
                     label.text = thread.name.ToString();
 
-                // Store thread ID for fold button callback
-                if (label.m_threadId != thread.threadId)
-                {
-                    label.m_threadId = thread.threadId;
-                    // Clear all existing callbacks and add new one with captured threadId
-                    ulong capturedThreadId = thread.threadId;
-                    label.m_foldButton.clickable = new Clickable(() => OnThreadFoldButtonClicked(capturedThreadId));
-                }
+                // Update thread ID (callback will use current value)
+                label.m_threadId = thread.threadId;
 
-                // Update fold button arrow based on fold state
-                label.m_foldButton.text = threadPos.isFolded ? "►" : "▼";
+                // Hide fold toggle for threads that are alone in their group
+                label.SetFoldable(!singleThreadGroupIds.Contains(thread.threadId));
+
+                // Update fold state (Foldout.value: true = expanded, false = collapsed)
+                label.m_foldout.SetValueWithoutNotify(!threadPos.isFolded);
 
                 float3 posTemp = new float3(0.0f, threadPos.offset, 0.0f);
                 float3 pos = transform(mat, posTemp);
-                label.style.translate = new StyleTranslate(new Translate(new Length(10.0f), new Length(pos.y + 5.0f), 0.0f));
+                // Indent thread labels under their group (tree view style)
+                label.style.translate = new StyleTranslate(new Translate(new Length(20.0f), new Length(pos.y + 5.0f), 0.0f));
                 label.style.visibility = Visibility.Visible;
 
                 threadLabelIndex++;
@@ -221,21 +258,16 @@ internal class ThreadLabels : VisualElement
         {
             GroupLabel groupLabel = m_groupLabels[groupLabelIndex];
 
-            // Update label text
-            if (groupLabel.text != groupInfo.name)
-                groupLabel.text = groupInfo.name.ToString();
+            // Update label text (use display name for UI)
+            string displayName = GetGroupDisplayName(groupInfo.name);
+            if (groupLabel.text != displayName)
+                groupLabel.text = displayName;
 
-            // Store group name for fold button callback
-            if (groupLabel.m_groupName != groupInfo.name)
-            {
-                groupLabel.m_groupName = groupInfo.name;
-                // Clear all existing callbacks and add new one with captured groupName
-                FixedString128Bytes capturedGroupName = groupInfo.name;
-                groupLabel.m_foldButton.clickable = new Clickable(() => OnGroupFoldButtonClicked(capturedGroupName));
-            }
+            // Update group name (callback will use current value)
+            groupLabel.m_groupName = groupInfo.name;
 
-            // Update fold button arrow based on fold state
-            groupLabel.m_foldButton.text = groupInfo.isFolded ? "►" : "▼";
+            // Update fold state (Foldout.value: true = expanded, false = collapsed)
+            groupLabel.m_foldout.SetValueWithoutNotify(!groupInfo.isFolded);
 
             // Use the group's stored offset for positioning
             float3 posTemp = new float3(0.0f, groupInfo.offset, 0.0f);

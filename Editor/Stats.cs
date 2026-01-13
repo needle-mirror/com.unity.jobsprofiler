@@ -378,6 +378,7 @@ internal class Stats : VisualElement
 
         Show();
 
+        style.backgroundColor = new Color(0.22f, 0.22f, 0.22f, 1.0f);
         parent.Add(this);
 
         m_frameCache = frameCache;
