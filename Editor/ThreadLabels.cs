@@ -25,6 +25,7 @@ internal abstract class FoldableLabel : VisualElement
         m_foldout = new Foldout();
         m_foldout.text = text;
         m_foldout.value = true; // Expanded by default
+        m_foldout.style.fontSize = JobsProfilerSettings.BarTextFontSize;
         if (isBold)
             m_foldout.style.unityFontStyleAndWeight = FontStyle.Bold;
         Add(m_foldout);
@@ -143,36 +144,55 @@ internal class ThreadLabels : VisualElement
         m_visible = true;
     }
 
-    internal void DrawThreadLines(MeshGenerationContext ctx, float width, float height)
+    internal void DrawSeparators(MeshGenerationContext ctx, float width, float height)
     {
         if (!m_visible)
             return;
 
-        ctx.painter2D.strokeColor = new Color32(60, 60, 60, 255);
+        ctx.painter2D.strokeColor = JobsProfilerSettings.ThreadSeparatorLine;
         ctx.painter2D.lineWidth = 1.0f;
 
-        foreach (var label in m_threadLabels)
+        // Draw separator above each group
+        for (int i = 0; i < m_groupLabels.Count; i++)
         {
-            // Skip hidden labels (e.g., when their group is folded)
+            var label = m_groupLabels[i];
             if (label.style.visibility == Visibility.Hidden)
                 continue;
 
             var pos = label.resolvedStyle.translate;
 
-            // Skip labels that are outside view
+            if (pos.y < 0.0f || pos.y > height)
+                continue;
+
+            float separatorY = pos.y + 2.0f;
+
+            ctx.painter2D.BeginPath();
+            ctx.painter2D.MoveTo(new Vector2(0.0f, separatorY));
+            ctx.painter2D.LineTo(new Vector2(width, separatorY));
+            ctx.painter2D.Stroke();
+        }
+
+        // Draw separator above each thread
+        foreach (var label in m_threadLabels)
+        {
+            if (label.style.visibility == Visibility.Hidden)
+                continue;
+
+            var pos = label.resolvedStyle.translate;
+
             if (pos.y < 0.0f || pos.y > height)
                 continue;
 
             ctx.painter2D.BeginPath();
-            ctx.painter2D.MoveTo(new Vector2(0.0f, pos.y - 5.0f));
-            ctx.painter2D.LineTo(new Vector2(width, pos.y - 5.0f));
+            ctx.painter2D.MoveTo(new Vector2(0.0f, pos.y));
+            ctx.painter2D.LineTo(new Vector2(width, pos.y));
             ctx.painter2D.Stroke();
         }
     }
 
     void OnGenerateVisualContent(MeshGenerationContext ctx)
     {
-        DrawThreadLines(ctx, resolvedStyle.width, resolvedStyle.height);
+        DrawSeparators(ctx, resolvedStyle.width, resolvedStyle.height);
     }
 
     internal void Update(in NativeHashMap<ulong, ThreadPosition> threadOffsets, in FrameData frameData, in NativeArray<ThreadGroupInfo> threadGroupOrder, float4x4 mat)
@@ -182,7 +202,7 @@ internal class ThreadLabels : VisualElement
 
         float y = resolvedStyle.transformOrigin.y;
 
-        // Build a set of thread IDs that are alone in their group (no need for fold toggle)
+        // Build set of thread IDs that are alone in their group (hide their labels)
         HashSet<ulong> singleThreadGroupIds = new HashSet<ulong>();
         foreach (var group in frameData.threadGroups)
         {
@@ -223,7 +243,9 @@ internal class ThreadLabels : VisualElement
                 ThreadLabel label = m_threadLabels[threadLabelIndex];
 
                 // Hide labels for threads in preview mode (folded group compact view)
-                if (threadPos.visibility == ThreadVisibility.Preview)
+                // or for single-thread groups (group label is shown instead)
+                if (threadPos.visibility == ThreadVisibility.Preview ||
+                    singleThreadGroupIds.Contains(thread.threadId))
                 {
                     label.style.visibility = Visibility.Hidden;
                     threadLabelIndex++;
@@ -236,8 +258,8 @@ internal class ThreadLabels : VisualElement
                 // Update thread ID (callback will use current value)
                 label.m_threadId = thread.threadId;
 
-                // Hide fold toggle for threads that are alone in their group
-                label.SetFoldable(!singleThreadGroupIds.Contains(thread.threadId));
+                // Show fold toggle for threads in multi-thread groups
+                label.SetFoldable(true);
 
                 // Update fold state (Foldout.value: true = expanded, false = collapsed)
                 label.m_foldout.SetValueWithoutNotify(!threadPos.isFolded);
@@ -245,7 +267,7 @@ internal class ThreadLabels : VisualElement
                 float3 posTemp = new float3(0.0f, threadPos.offset, 0.0f);
                 float3 pos = transform(mat, posTemp);
                 // Indent thread labels under their group (tree view style)
-                label.style.translate = new StyleTranslate(new Translate(new Length(20.0f), new Length(pos.y + 5.0f), 0.0f));
+                label.style.translate = new StyleTranslate(new Translate(new Length(20.0f), new Length(pos.y), 0.0f));
                 label.style.visibility = Visibility.Visible;
 
                 threadLabelIndex++;
@@ -272,7 +294,7 @@ internal class ThreadLabels : VisualElement
             // Use the group's stored offset for positioning
             float3 posTemp = new float3(0.0f, groupInfo.offset, 0.0f);
             float3 pos = transform(mat, posTemp);
-            groupLabel.transform.position = new Vector3(10.0f, pos.y + 5.0f, 0.0f);
+            groupLabel.style.translate = new StyleTranslate(new Translate(new Length(10.0f), new Length(pos.y), 0.0f));
             groupLabel.style.visibility = Visibility.Visible;
 
             groupLabelIndex++;

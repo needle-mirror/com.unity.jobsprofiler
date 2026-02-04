@@ -136,9 +136,17 @@ internal class JobsProfiler : VisualElement
         VisualElement mv = tree.Query<VisualElement>("main_view").First();
         mv.style.flexGrow = 1;
         tree.style.flexGrow = 1;
-        tree.style.backgroundColor = new Color(0.22f, 0.22f, 0.22f, 1.0f);
+        tree.AddToClassList("jobs-profiler-main-background");
 
         m_filter = new Filter(m_frameCache, m_searchField);
+
+        // Load timeline stylesheet and add theme color reader
+        var timelineUssPath = AssetDatabase.GUIDToAssetPath("bc4bb6404dbf22647b4c06a1967624d1");
+        var timelineStyleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(timelineUssPath);
+        tree.styleSheets.Add(timelineStyleSheet);
+
+        var themeColorReader = new JobsProfilerSettings.ThemeColorReader();
+        tree.Add(themeColorReader);
 
         m_timelineView = new TimelineBarView(mv, tree, m_frameCache, m_filter);
 
@@ -154,6 +162,29 @@ internal class JobsProfiler : VisualElement
         RegisterCallback<GeometryChangedEvent>(OnGeometryChangedEvent);
 
         ProfilerDriver.profileCleared += ClearedProfile;
+
+        // Subscribe to color blind mode changes to refresh the view
+        JobsProfilerSettings.ColorBlindModeChanged += OnColorBlindModeChanged;
+        RegisterCallback<DetachFromPanelEvent>(OnDetachFromPanel);
+    }
+
+    void OnDetachFromPanel(DetachFromPanelEvent evt)
+    {
+        Cleanup();
+    }
+
+    internal void Cleanup()
+    {
+        EditorApplication.update -= Update;
+        ProfilerDriver.profileCleared -= ClearedProfile;
+        JobsProfilerSettings.ColorBlindModeChanged -= OnColorBlindModeChanged;
+        m_timelineView?.Dispose();
+    }
+
+    void OnColorBlindModeChanged()
+    {
+        // Force a repaint when color blind mode changes
+        m_timelineView?.MarkDirtyRepaint();
     }
 }
 
@@ -188,6 +219,17 @@ internal class JobsProfilerViewController : ProfilerModuleViewController
     void OnSelectedFrameIndexChanged(long selectedFrameIndex)
     {
         m_jobsProfiler.SelectFrame(selectedFrameIndex);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            ProfilerWindow.SelectedFrameIndexChanged -= OnSelectedFrameIndexChanged;
+            ProfilerDriver.profileLoaded -= LoadedProfile;
+            m_jobsProfiler?.Cleanup();
+        }
+        base.Dispose(disposing);
     }
 }
 

@@ -163,7 +163,7 @@ internal struct JobFlow
 
     static internal Color32 getScheduleColor()
     {
-        return new Color32(114, 114, 255, 255);
+        return JobsProfilerColors.ScheduleColor;
     }
 };
 /// <summary>
@@ -185,7 +185,6 @@ internal struct TimelineSettings
     internal bool showDependantOn;
     internal bool showCompletedByWait;
     internal bool showCompletedByNoWait;
-    internal bool verticalZoom;
     internal bool zoomOnEventHover;
     internal bool showFoldedGroupPreview;
     /// When an element is smaller than this we expand the hit area to make it easier to select
@@ -464,6 +463,12 @@ struct GenerateMeshJob : IJob
     [ReadOnly]
     internal Color32 m_backgroundColor;
 
+    // Selection blend colors (passed in for Burst compatibility)
+    [ReadOnly]
+    internal Color32 m_selectionBlendColor;
+    [ReadOnly]
+    internal Color32 m_deselectionBlendColor;
+
     //[ReadOnly]
     //internal NativeList<JobInfo> m_jobsInfo;
 
@@ -494,9 +499,9 @@ struct GenerateMeshJob : IJob
         if (jobSelection.state == JobSelection.State.Selected && !isColorReplaced)
         {
             if (jobSelection.eventIndex == eventIndex && jobSelection.frameIndex == m_frameIndex.frameCacheIndex)
-                color = Color32.Lerp(color, Color.white, 0.2f);
+                color = Color32.Lerp(color, m_selectionBlendColor, 0.2f);
             else
-                color = Color32.Lerp(color, Color.black, 0.4f);
+                color = Color32.Lerp(color, m_deselectionBlendColor, 0.4f);
         }
 
         // Fade non-selected frames toward background color (not black)
@@ -516,9 +521,9 @@ struct GenerateMeshJob : IJob
         if (jobSelection.state == JobSelection.State.Selected)
         {
             if (jobSelection.eventIndex == eventIndex && jobSelection.frameIndex == m_frameIndex.frameCacheIndex)
-                color = Color32.Lerp(color, Color.white, 0.2f);
+                color = Color32.Lerp(color, m_selectionBlendColor, 0.2f);
             else
-                color = Color32.Lerp(color, Color.black, 0.4f);
+                color = Color32.Lerp(color, m_deselectionBlendColor, 0.4f);
         }
 
         // Fade non-selected frames toward background color (not black)
@@ -627,6 +632,61 @@ struct GenerateMeshJob : IJob
             ushort level = profEvent.level;
             int catId = profEvent.categoryId;
 
+            // Hit testing - do this BEFORE merge logic so small events can be selected
+            // Only hover if right mouse button isn't down and event is not filtered out
+            if (m_mouseState.isRightDown == 0 && !isFilteredOut)
+            {
+                float2 mousePos = m_mouseState.pos;
+
+                float2 hitMin = new float2(pos.x, pos.y);
+                float2 hitMax = new float2(corner.x, corner.y);
+
+                bool2 inside0;
+                bool2 inside1;
+
+                // Hit area is smaller than this value we want to expand it to make selection easier.
+                if ((hitMax.x - hitMin.x) < TimelineSettings.ExpandWidthHitArea)
+                {
+                    float middlePoint = (hitMin.x + hitMax.x) * 0.5f;
+                    float2 startCorner = hitMin;
+                    float2 endCorner = hitMax;
+
+                    startCorner.x = middlePoint - (TimelineSettings.ExpandWidthHitAreaTotalSize * 0.5f);
+                    endCorner.x = middlePoint + (TimelineSettings.ExpandWidthHitAreaTotalSize * 0.5f);
+
+                    inside0 = mousePos >= startCorner;
+                    inside1 = mousePos < endCorner;
+                }
+                else
+                {
+                    inside0 = mousePos >= hitMin;
+                    inside1 = mousePos < hitMax;
+                }
+
+                if (inside0.x && inside0.y && inside1.x && inside1.y)
+                {
+                    // Check if we have selected a job and aren't panning and we don't have a drag selection active
+                    if (m_mouseState.isLeftDown == 1 &&
+                        m_mouseState.isAltKeyDown == 0 &&
+                        jobSelection.dragState != JobSelection.State.Drag)
+                    {
+                        ulong jobHandle;
+
+                        m_eventHandleLookup.TryGetValue(eventIndex, out jobHandle);
+                        jobSelection.state = JobSelection.State.Selected;
+                        jobSelection.frameIndex = m_frameIndex.frameCacheIndex;
+                        jobSelection.eventIndex = eventIndex;
+                        jobSelection.jobHandle = new InternalJobHandle(jobHandle);
+                        jobSelection.updatedSelection = true;
+                        jobSelection.updatedFocus = true;
+                        jobSelection.hover = false;
+                        jobSelection.markerId = profEvent.markerId;
+                    }
+                }
+
+                m_jobSelection[0] = jobSelection;
+            }
+
             // if we have a bar that is less than a pixel we clamp it, but also start checking if we can merge it
             if (size.x < 0.99f)
             {
@@ -676,57 +736,6 @@ struct GenerateMeshJob : IJob
                 c0 = mergeStartCorner;
                 c1 = mergeCorner;
                 catId = prevCategory;
-            }
-
-            // Only hover if right mouse button isn't down and event is not filtered out
-            if (m_mouseState.isRightDown == 0 && !isFilteredOut)
-            {
-                float2 mousePos = m_mouseState.pos;
-
-                bool2 inside0;
-                bool2 inside1;
-
-                // Hit area is smaller than this value we want to expand it to make selection easier.
-                if ((c1.x - c0.x) < TimelineSettings.ExpandWidthHitArea)
-                {
-                    float middlePoint = (c0.x + c1.x) * 0.5f;
-                    float2 startCorner = c0;
-                    float2 endCorner = c1;
-
-                    startCorner.x = middlePoint - (TimelineSettings.ExpandWidthHitAreaTotalSize * 0.5f);
-                    endCorner.x = middlePoint + (TimelineSettings.ExpandWidthHitAreaTotalSize * 0.5f);
-
-                    inside0 = mousePos >= startCorner;
-                    inside1 = mousePos < endCorner;
-                }
-                else
-                {
-                    inside0 = mousePos >= c0;
-                    inside1 = mousePos < c1;
-                }
-
-                if (inside0.x && inside0.y && inside1.x && inside1.y)
-                {
-                    // Check if we have selected a job and aren't panning and we don't have a drag selection active
-                    if (m_mouseState.isLeftDown == 1 &&
-                        m_mouseState.isAltKeyDown == 0 &&
-                        jobSelection.dragState != JobSelection.State.Drag)
-                    {
-                        ulong jobHandle;
-
-                        m_eventHandleLookup.TryGetValue(eventIndex, out jobHandle);
-                        jobSelection.state = JobSelection.State.Selected;
-                        jobSelection.frameIndex = m_frameIndex.frameCacheIndex;
-                        jobSelection.eventIndex = eventIndex;
-                        jobSelection.jobHandle = new InternalJobHandle(jobHandle);
-                        jobSelection.updatedSelection = true;
-                        jobSelection.updatedFocus = true;
-                        jobSelection.hover = false;
-                        jobSelection.markerId = profEvent.markerId;
-                    }
-                }
-
-                m_jobSelection[0] = jobSelection;
             }
 
             if (isScheduleJobEvent && state == MergeState.Default)
@@ -1048,11 +1057,10 @@ class TickLabels
 
 
 /// Displays the rectanges bars
-class TimelineBarView : VisualElement
+class TimelineBarView : VisualElement, IDisposable
 {
     // Background color of the timeline area - used for fading non-selected frames
-    // Must match the background-color in timeline.uxml (rgb(40, 40, 40))
-    internal static readonly Color32 kBackgroundColor = new Color32(40, 40, 40, 255);
+    internal static Color BackgroundColor => JobsProfilerSettings.TimelineBackground;
 
     FrameCache m_frameCache;
 
@@ -1089,7 +1097,7 @@ class TimelineBarView : VisualElement
     //internal FontAsset m_font;
     internal bool m_isCacheEnabled;
     internal DragRange m_dragRange;
-    private float m_barSize = 22.0f;
+    private float m_barSize = JobsProfilerSettings.BarHeight;
 
     /// Order in which to draw the thread groups
     private NativeArray<ThreadGroupInfo> m_threadGroupOrder;
@@ -1097,14 +1105,13 @@ class TimelineBarView : VisualElement
     private NativeArray<PrimitiveRenderer> m_primitiveRenderers;
     private Filter m_filter;
     private SmoothEventTransition m_posTransition = new SmoothEventTransition();
+    private bool m_disposed = false;
 
     private double m_lastTimeSinceStartup = EditorApplication.timeSinceStartup;
     private const int PreAllocateTextElementCount = 1024;
-    private const float ShowTextSizeLimit = 20.0f;
     private const float kShowTimelineHeight = 200.0f;
     internal const int kTickRulerDistMin = 3;
     internal const int kTickRulerDistFull = 80; // distance between ruler tick marks where they gain full strength
-    internal const int kThreadSpacingPixels = 28;
 
     internal static NativeArray<Color> m_profilerColors = new NativeArray<Color>(37, Allocator.Persistent);
     internal static NativeArray<Color> k_LookupProfilerColors = new NativeArray<Color>(17, Allocator.Persistent);
@@ -1147,9 +1154,12 @@ class TimelineBarView : VisualElement
 
         rootVisualElement.style.flexGrow = 1;
         style.flexGrow = 1;
-        style.backgroundColor = new Color(0.22f, 0.22f, 0.22f, 1.0f);
+        AddToClassList("jobs-profiler-main-background");
 
         Add(rootVisualElement);
+
+        // Apply semantic colors (theme colors are in UXML via USS classes)
+        ApplySemanticColors(rootVisualElement);
 
         VisualElement tick_marks = this.Query<VisualElement>("tick_marks").First();
         m_verticalScroller = this.Query<Scroller>("timeline_vertical_scroll").First();
@@ -1191,7 +1201,7 @@ class TimelineBarView : VisualElement
         m_settings.mat = Unity.Mathematics.float4x4.identity;
         m_settings.windowRect.width = 100.0f;
         m_settings.windowRect.height = 100.0f;
-        m_settings.barSize = 22.0f;
+        m_settings.barSize = JobsProfilerSettings.BarHeight;
         m_settings.invYBarSize = 1.0f - (1.0f / m_settings.barSize);
 
         m_tickHandler.SetTickModulos(Settings.TickModulos);
@@ -1234,7 +1244,7 @@ class TimelineBarView : VisualElement
 
         m_dragRange.textLabel = new TextElement();
         m_dragRange.textLabel.style.position = Position.Absolute;
-        m_dragRange.textLabel.style.backgroundColor = Color.black;
+        m_dragRange.textLabel.AddToClassList("jobs-profiler-drag-label-background");
         m_dragRange.textLabel.style.borderRightWidth = 1;
         m_dragRange.textLabel.style.borderLeftWidth = 1;
         m_dragRange.textLabel.style.borderTopWidth = 1;
@@ -1277,12 +1287,36 @@ class TimelineBarView : VisualElement
         m_textRenderer.HideLables();
         m_tickLabels.HideLabels();
         m_stats.ClearData();
-        m_jobInfoPanel.ClearData();
+        m_jobInfoPanel.Deactivate();
         m_nextFrame = -1;
     }
 
-    ~TimelineBarView()
+    /// <summary>
+    /// Apply semantic colors to UXML elements after loading.
+    /// Theme colors are applied via USS classes defined in the UXML.
+    /// </summary>
+    void ApplySemanticColors(VisualElement root)
     {
+        // Apply semantic colors (same in both themes)
+        var scheduledByColor = root.Q<VisualElement>("scheduled_by_color");
+        if (scheduledByColor != null)
+            scheduledByColor.style.backgroundColor = (Color)JobsProfilerColors.ScheduleColor;
+
+        var completedByColor = root.Q<VisualElement>("completed_by_color");
+        if (completedByColor != null)
+            completedByColor.style.backgroundColor = JobsProfilerColors.CompletedWaitColor;
+
+        var dependsOnColors = root.Query<VisualElement>("depends_on_color").ToList();
+        foreach (var dependsOnColor in dependsOnColors)
+            dependsOnColor.style.backgroundColor = JobsProfilerColors.DependencyColor;
+    }
+
+    public void Dispose()
+    {
+        if (m_disposed)
+            return;
+        m_disposed = true;
+
         WaitPreviousFrameJobs();
 
         m_dependencyInfo.startComplete.Dispose();
@@ -1301,6 +1335,7 @@ class TimelineBarView : VisualElement
             primitiveRenderer.Dispose();
 
         m_primitiveRenderers.Dispose();
+        m_activeMeshGenerators.Dispose();
     }
 
     internal void SetCurrentFrame(int currentFrame)
@@ -1333,8 +1368,8 @@ class TimelineBarView : VisualElement
         }
         else
         {
-            label.text = String.Format("<link=\"0\"><color=#40a0ff><u>{0}</u></color></link>",
-                    m_frameCache.GetEventStringForFrame(frameIndex, eventIndex));
+            label.text = String.Format("<link=\"0\"><color={0}>{1}</color></link>",
+                    JobsProfilerSettings.LinkColorHex, m_frameCache.GetEventStringForFrame(frameIndex, eventIndex));
             label.SetEnabled(true);
         }
     }
@@ -1371,12 +1406,10 @@ class TimelineBarView : VisualElement
         m_settings.showCompletedByWait = m_settingsMenu.ShowCompletedByWait;
         m_settings.showCompletedByNoWait = m_settingsMenu.ShowCompletedByNoWait;
         m_settings.showFullDependencyChain = m_settingsMenu.ShowFullDependencyChain;
-        m_settings.verticalZoom = m_settingsMenu.VerticalZoom;
         m_settings.zoomOnEventHover = m_settingsMenu.ZoomOnEventHover;
         m_settings.showFoldedGroupPreview = m_settingsMenu.ShowFoldedGroupPreview;
         m_settings.barSize = m_barSize;
         m_settings.invYBarSize = 1.0f - (1.0f / m_settings.barSize);
-        m_zoomArea.verticalZoom = m_settings.verticalZoom;
 
         m_selectedFrameRange.start = Math.Max(m_nextFrame - SelectedFrameRange.k_SelectionRange, ProfilerDriver.firstFrameIndex);
         m_selectedFrameRange.active = m_nextFrame;
@@ -1715,18 +1748,21 @@ class TimelineBarView : VisualElement
                     threadAnimating = true;
                 }
 
-                // Visible depth animation
-                float targetVisibleDepth = kMinVisibleDepth;
+                // Visible depth animation - only animate if we have collected depth data for this thread.
+                // If the thread scrolled out of view, we won't have data for it and should preserve
+                // its current visible depth to prevent threads from jumping when scrolling.
                 if (m_collectedVisibleDepths.TryGetValue(threadId, out int collected))
-                    targetVisibleDepth = math.clamp(collected, kMinVisibleDepth, threadPos.depth);
-
-                if (math.abs(threadPos.visibleDepth - targetVisibleDepth) > 0.01f)
                 {
-                    float step = animationSpeed * deltaTime;
-                    threadPos.visibleDepth = math.lerp(threadPos.visibleDepth, targetVisibleDepth, step);
-                    if (math.abs(threadPos.visibleDepth - targetVisibleDepth) < 0.01f)
-                        threadPos.visibleDepth = targetVisibleDepth;
-                    threadAnimating = true;
+                    float targetVisibleDepth = math.clamp(collected, kMinVisibleDepth, threadPos.depth);
+
+                    if (math.abs(threadPos.visibleDepth - targetVisibleDepth) > 0.01f)
+                    {
+                        float step = animationSpeed * deltaTime;
+                        threadPos.visibleDepth = math.lerp(threadPos.visibleDepth, targetVisibleDepth, step);
+                        if (math.abs(threadPos.visibleDepth - targetVisibleDepth) < 0.01f)
+                            threadPos.visibleDepth = targetVisibleDepth;
+                        threadAnimating = true;
+                    }
                 }
 
                 if (threadAnimating)
@@ -1817,12 +1853,26 @@ class TimelineBarView : VisualElement
             if (groupsIndex.Count == 0)
                 continue;
 
+            // Calculate max thread count across all frames for this group
+            // This is needed early to determine if this is a single-thread group
+            int maxThreadCountForGroup = 0;
+            for (int i = 0; i < groupsIndex.Count; ++i)
+            {
+                int threadCount = groupsIndex[i].group.arrayEnd - groupsIndex[i].group.arrayIndex;
+                if (threadCount > maxThreadCountForGroup)
+                    maxThreadCountForGroup = threadCount;
+            }
+
+            bool isSingleThreadGroup = maxThreadCountForGroup == 1;
+
             // Store the offset for this group so we can position its label
             group.offset = threadOffset;
             m_threadGroupOrder[groupIndex] = group;
 
-            // Reserve space for the group header label
-            threadOffset += 1.0f;
+            // Reserve space for the group header label only for multi-thread groups
+            // For single-thread groups, the group label aligns with the thread bars
+            if (!isSingleThreadGroup)
+                threadOffset += 1.0f;
 
             // If group is folded, either skip or show preview based on setting
             if (group.isFolded)
@@ -1865,6 +1915,12 @@ class TimelineBarView : VisualElement
 
                         threadOffset += offsetStep;
                     }
+                }
+                else if (isSingleThreadGroup)
+                {
+                    // For single-thread groups without preview, still reserve 1.0f space
+                    // to ensure proper separator positioning for the next group
+                    threadOffset += 1.0f;
                 }
                 continue;
             }
@@ -2107,6 +2163,17 @@ class TimelineBarView : VisualElement
         if (m_filter.UseFilter && !m_filter.FilterIds.Contains(jobSelection.markerId))
             return;
 
+        // Find if the Jobs group is folded
+        bool isJobsGroupFolded = false;
+        for (int i = 0; i < m_threadGroupOrder.Length; i++)
+        {
+            if (m_threadGroupOrder[i].name == "Job")
+            {
+                isJobsGroupFolded = m_threadGroupOrder[i].isFolded;
+                break;
+            }
+        }
+
         var job = new GenerateDepenedicesMeshJob
         {
             m_renderer = renderer,
@@ -2127,6 +2194,7 @@ class TimelineBarView : VisualElement
             m_timeOffset = timeOffset,
             m_startCompleteInfo = m_dependencyInfo.startComplete,
             m_jobFlows = data.jobFlows,
+            m_isJobsGroupFolded = isJobsGroupFolded,
         };
         job.Schedule().Complete();
 
@@ -2152,14 +2220,16 @@ class TimelineBarView : VisualElement
             m_threadOffsets = m_threadOffsets,
             m_events = data.events,
             m_mouseState = m_mouseData,
-            m_markerColors = data.catColors,
+            m_markerColors = JobsProfilerSettings.IsColorBlindMode ? data.catColorsColorBlind : data.catColors,
             m_jobSelection = m_jobSelectionJobs[index],
             m_frameIndex = frameIndex,
             m_eventHandleLookup = data.eventHandleLookup,
             m_idFilters = m_filter.FilterIds,
             m_useFilter = m_filter.UseFilter,
             m_jobFlows = data.jobFlows,
-            m_backgroundColor = kBackgroundColor,
+            m_backgroundColor = BackgroundColor,
+            m_selectionBlendColor = JobsProfilerSettings.SelectionBlendColor,
+            m_deselectionBlendColor = JobsProfilerSettings.DeselectionBlendColor,
             m_visibleDepthOutput = visibleDepthOutput,
         };
 
@@ -2272,7 +2342,7 @@ class TimelineBarView : VisualElement
             m_activeMeshGenerators.Add(meshContext);
         }
 
-        m_textRenderer.PostUpdate(textHandle, infos, m_frameCache, kBackgroundColor);
+        m_textRenderer.PostUpdate(textHandle, infos, m_frameCache, BackgroundColor, JobsProfilerSettings.BarTextColor);
 
         frames.Dispose();
         infos.Dispose();
@@ -2319,7 +2389,7 @@ class TimelineBarView : VisualElement
 
     void OnGenerateVisualContent(MeshGenerationContext mgc)
     {
-        m_threads.DrawThreadLines(mgc, resolvedStyle.width, resolvedStyle.height);
+        m_threads.DrawSeparators(mgc, resolvedStyle.width, resolvedStyle.height);
 
         foreach (var meshContext in m_activeMeshGenerators)
         {
@@ -2720,14 +2790,6 @@ class TimelineBarView : VisualElement
 
         m_zoomArea.UpdatePointerMove(evt);
         m_zoomArea.UpdateScrollers(m_horizontalScroller, m_verticalScroller);
-
-        if (m_zoomArea.IsZoomEventMove(evt) && m_settings.verticalZoom)
-        {
-            m_barSize += Event.current.delta.y * 0.01f;
-            m_barSize = Mathf.Clamp(m_barSize, 1.0f, 100.0f);
-        }
-
-        //oeuth
 
         // changing the scroller will update the view
         //m_verticalScroller.value = -m_zoomArea.temp_y;

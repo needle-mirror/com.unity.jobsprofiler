@@ -1,3 +1,41 @@
 .link-cursor {
     cursor: link;
 }
+
+/* Direct styling classes - use Unity's built-in USS variables */
+.jobs-profiler-main-background {
+    background-color: var(--unity-colors-window-background);
+}
+
+.jobs-profiler-timeline-background {
+    background-color: var(--unity-colors-default-background);
+}
+
+.jobs-profiler-threads-area {
+    background-color: var(--unity-colors-window-background);
+    border-right-color: var(--unity-colors-default-border);
+}
+
+.jobs-profiler-drag-label-background {
+    background-color: var(--unity-colors-default-background);
+}
+
+.jobs-profiler-info-panel {
+    border-top-width: 1px;
+    border-top-color: var(--unity-colors-default-border);
+}
+
+/* Theme color reader - used to extract Unity's built-in theme colors for C# rendering code */
+.jobs-profiler-theme-colors {
+    /* Text colors */
+    --bar-text-color: var(--unity-colors-default-text);
+
+    /* Background colors (for mesh rendering/fading) */
+    --timeline-background-color: var(--unity-colors-default-background);
+
+    /* Border and separator colors (for mesh rendering) */
+    --thread-separator-color: var(--unity-colors-toolbar-border);
+
+    /* Interactive colors */
+    --link-color: var(--unity-colors-link-text);
+}

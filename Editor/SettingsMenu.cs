@@ -20,7 +20,6 @@ internal class SettingsMenu
     bool m_showFullDependencyChain;
 
     // Experimental settings
-    bool m_verticalZoom;
     bool m_zoomOnEventHover;
     bool m_showFoldedGroupPreview = true;
 
@@ -68,10 +67,6 @@ internal class SettingsMenu
         menu.AppendSeparator();
         menu.AppendAction("Experimental Settings", null, DropdownMenuAction.Status.Disabled);
 
-        menu.AppendAction("Vertical Zoom",
-            a => { m_verticalZoom = !m_verticalZoom; },
-            a => m_verticalZoom ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
-
         menu.AppendAction("Zoom on event hover",
             a => { m_zoomOnEventHover = !m_zoomOnEventHover; },
             a => m_zoomOnEventHover ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
@@ -111,7 +106,6 @@ internal class SettingsMenu
     internal bool ShowCompletedByWait => m_showCompletedByWait;
     internal bool ShowCompletedByNoWait => m_showCompletedByNoWait;
     internal bool ShowFullDependencyChain => m_showFullDependencyChain;
-    internal bool VerticalZoom => m_verticalZoom;
     internal bool ZoomOnEventHover => m_zoomOnEventHover;
     internal bool ShowFoldedGroupPreview => m_showFoldedGroupPreview;
 }

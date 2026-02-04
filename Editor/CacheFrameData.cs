@@ -260,6 +260,8 @@ internal struct FrameData
     internal NativeList<ProfilingEvent> events;
     /// <summary>Color mapping for different event categories</summary>
     internal NativeList<Color32> catColors;
+    /// <summary>Color-blind safe color mapping for different event categories</summary>
+    internal NativeList<Color32> catColorsColorBlind;
     /// <summary>Thread groupings for organizational and display purposes</summary>
     internal NativeList<ThreadGroup> threadGroups;
     /// <summary>Information about individual threads active in the frame</summary>
@@ -788,12 +790,27 @@ struct CacheFrameJob : IJob
         mainThread.GetAllCategories(allCategories);
 
         output.catColors.Resize(allCategories.Count, NativeArrayOptions.ClearMemory);
+        output.catColorsColorBlind.Resize(allCategories.Count, NativeArrayOptions.ClearMemory);
 
         for (int i = 0; i < allCategories.Count; ++i)
+        {
             output.catColors.Add(new Color32(0, 0, 0, 0));
+            output.catColorsColorBlind.Add(new Color32(0, 0, 0, 0));
+        }
 
         for (int catId = 0, count = allCategories.Count; catId < count; ++catId)
             output.catColors[allCategories[catId].id] = allCategories[catId].color;
+
+        // Map each category's color to its color-blind safe equivalent
+        for (int catId = 0, count = allCategories.Count; catId < count; ++catId)
+        {
+            int id = allCategories[catId].id;
+            if (id < output.catColorsColorBlind.Length)
+            {
+                Color defaultColor = allCategories[catId].color;
+                output.catColorsColorBlind[id] = JobsProfilerSettings.GetColorBlindSafeColor(defaultColor) ?? defaultColor;
+            }
+        }
 
         int threadCount = m_rawProfilerFrames.Length;
 
@@ -1489,6 +1506,7 @@ internal class FrameCache
                 threadsLookup = new NativeHashMap<ulong, int>(200, Allocator.Persistent),
                 threads = new NativeArray<ThreadInfo>(threadIndices.Length, Allocator.Persistent),
                 catColors = new NativeList<Color32>(32, Allocator.Persistent),
+                catColorsColorBlind = new NativeList<Color32>(32, Allocator.Persistent),
                 scheduledJobs = new NativeList<ScheduledJobInfo>(128, Allocator.Persistent),
                 stringIndex = new NativeHashMap<int, int>(128, Allocator.Persistent),
                 strings128 = new NativeList<FixedString128Bytes>(64, Allocator.Persistent),
@@ -1552,6 +1570,7 @@ internal class FrameCache
             cache.Value.threads.Dispose();
             cache.Value.events.Dispose();
             cache.Value.catColors.Dispose();
+            cache.Value.catColorsColorBlind.Dispose();
             cache.Value.stringIndex.Dispose();
             cache.Value.strings128.Dispose();
             cache.Value.strings512.Dispose();

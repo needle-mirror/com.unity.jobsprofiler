@@ -206,7 +206,7 @@ internal struct CalculateVisibleLabel : IJob
             var output  = new VisibleText
             {
                 key = key,
-                pos = new float2(pos.x + k_BorderSize, pos.y + k_BorderSize),
+                pos = new float2(pos.x + k_BorderSize, pos.y),
                 categoryId = profEvent.categoryId,
                 alpha = (byte)(alpha * 255.0f),
                 markerId = profEvent.markerId,
@@ -281,9 +281,10 @@ internal struct CalculateLabelUpdatesJob : IJob
     /// This allows us to check if we have a key to remove when allocating a new slot
     internal NativeArray<ulong> m_lookupKeys;
 
-    // Background color for fading non-selected frames (passed in from TimelineBarView)
     [ReadOnly]
     internal Color m_backgroundColor;
+    [ReadOnly]
+    internal Color m_textColor;
 
     /// This code will in a linear fashion finds the lowest frame count number.
     /// As this code just tries to find in a linear fashion it needs to be pretty fast
@@ -401,12 +402,12 @@ internal struct CalculateLabelUpdatesJob : IJob
             float alpha = textInfo.alpha * 1.0f / 255.0f;
             float fade = frameIndex.fade;
 
-            Color startColor = Color.white;
+            Color startColor = m_textColor;
             // Fade toward background color to match bar fading
             Color endColor = m_backgroundColor;
 
             if (textInfo.categoryId == 3)
-                startColor = new Color(0.2f, 0.2f, 0.2f, 1.0f);
+                startColor = JobsProfilerColors.StripeColor;
 
             startColor.a = alpha;
             endColor.a = alpha;
@@ -438,15 +439,17 @@ internal class WrapText : VisualElement
         style.overflow = Overflow.Hidden;
         style.position = Position.Absolute;
         style.transformOrigin = new TransformOrigin(0, 0);
+        style.height = JobsProfilerSettings.BarHeight;
 
-        //style.justifyContent = Justify.Center;
-        //m_text.style.overflow = Overflow.Hidden;
-        //m_text.style.textOverflow = TextOverflow.Clip;
-        //m_text.style.whiteSpace = WhiteSpace.NoWrap;
-        //m_text.style.unityTextAlign = TextAnchor.MiddleCenter;
+        // Use flexbox to vertically center the label
+        style.justifyContent = Justify.Center;
+
+        m_text.style.fontSize = JobsProfilerSettings.BarTextFontSize;
+        m_text.style.paddingTop = 0;
+        m_text.style.paddingBottom = 0;
+        m_text.style.marginTop = 0;
+        m_text.style.marginBottom = 0;
         m_text.usageHints = UsageHints.DynamicTransform;
-
-        //style.position = Position.Absolute;
 
         Add(m_text);
     }
@@ -464,8 +467,6 @@ internal class WrapText : VisualElement
 
 internal class TextRenderer
 {
-    internal const float kSkipTextBarSize = 14.0f;
-
     NativeArray<byte> m_updateIndices;
     NativeList<VisibleText> m_visibleTexts;
     NativeArray<TimelineText> m_timelineTexts;
@@ -540,7 +541,7 @@ internal class TextRenderer
         return job.Schedule(dependency);
     }
 
-    internal void PostUpdate(JobHandle prevHandle, in NativeArray<FrameIndex> frameIndices, in FrameCache frameCache, Color backgroundColor)
+    internal void PostUpdate(JobHandle prevHandle, in NativeArray<FrameIndex> frameIndices, in FrameCache frameCache, Color backgroundColor, Color textColor)
     {
         var labelsJob = new CalculateLabelUpdatesJob
         {
@@ -553,6 +554,7 @@ internal class TextRenderer
             m_frameCounts = m_frameCounts,
             m_lookupKeys = m_lookupKeys,
             m_backgroundColor = backgroundColor,
+            m_textColor = textColor,
         };
 
         labelsJob.Schedule(prevHandle).Complete();

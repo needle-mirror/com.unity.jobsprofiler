@@ -38,13 +38,13 @@ internal class JobsList
 
         if (columnIndex == 0)
         {
-            label.text = String.Format("<link=\"{0}\"><color=#40a0ff><u>{1}</u></color></link>",
-                                                (row << kRowShift) + columnIndex, m_data[row].name);
+            label.text = String.Format("<link=\"{0}\"><color={1}>{2}</color></link>",
+                                                (row << kRowShift) + columnIndex, JobsProfilerSettings.LinkColorHex, m_data[row].name);
         }
         else if (columnIndex == 1)
         {
-            label.text = String.Format("<link=\"{0}\"><color=#40a0ff><u>{1:0.000} ms</u></color></link>",
-                                      (row << kRowShift) + columnIndex, m_data[row].time);
+            label.text = String.Format("<link=\"{0}\"><color={1}>{2:0.000} ms</color></link>",
+                                      (row << kRowShift) + columnIndex, JobsProfilerSettings.LinkColorHex, m_data[row].time);
         }
     }
 
@@ -67,6 +67,7 @@ internal class JobsList
                 label.RegisterCallback<PointerOverLinkTagEvent>(HyperlinkOnPointerOver);
                 label.RegisterCallback<PointerOutLinkTagEvent>(HyperlinkOnPointerOut);
                 label.styleSheets.Add(styleSheet);
+                label.style.paddingLeft = 6;
                 label.userData = index;
                 return label;
             };
@@ -79,20 +80,18 @@ internal class JobsList
         m_view.viewDataKey = serializeName;
         m_view.itemsSource = m_data;
         m_view.style.flexGrow = 1;
+        m_view.styleSheets.Add(styleSheet);
 #if UNITY_2023_3_OR_NEWER
         m_view.sortingMode = ColumnSortingMode.Custom;
 #else
         m_view.sortingEnabled = true;
 #endif
         m_view.columnSortingChanged += SortingChanged;
-        m_view.style.borderTopColor = new StyleColor(Color.gray);
+        m_view.AddToClassList("jobs-profiler-info-panel-border");
         m_view.style.borderTopWidth = 1;
         m_view.style.borderLeftWidth = 1;
         m_view.style.borderRightWidth = 1;
         m_view.style.borderBottomWidth = 1;
-        m_view.style.borderLeftColor = new StyleColor(Color.black);
-        m_view.style.borderRightColor = new StyleColor(Color.black);
-        m_view.style.borderBottomColor = new StyleColor(Color.black);
 
         root.Add(m_view);
     }
@@ -149,7 +148,7 @@ internal class JobsList
             m_data.Add(data);
         }
 
-        m_view.RefreshItems();
+        SortingChanged();
     }
 
     internal void Clear()
@@ -178,7 +177,16 @@ internal class JobsList
         var linkID = int.Parse(evt.linkID);
         HoverOrClick(linkID, true);
 
-        (evt.currentTarget as Label).AddToClassList("link-cursor");
+        var label = evt.currentTarget as Label;
+        label.AddToClassList("link-cursor");
+        // Add underline tags around the link content
+        string text = label.text;
+        int start = text.IndexOf('>', text.IndexOf("<color=")) + 1;
+        int end = text.IndexOf("</color>");
+        if (start > 0 && end > start)
+        {
+            label.text = text.Insert(end, "</u>").Insert(start, "<u>");
+        }
     }
     internal void HyperlinkOnPointerOut(PointerOutLinkTagEvent evt)
     {
@@ -188,7 +196,10 @@ internal class JobsList
             m_jobSelection.frameIndex,
             false);
 
-        (evt.target as Label).RemoveFromClassList("link-cursor");
+        var label = evt.target as Label;
+        label.RemoveFromClassList("link-cursor");
+        // Remove underline tags
+        label.text = label.text.Replace("<u>", "").Replace("</u>", "");
     }
 
     void LinkUpClicked(PointerUpLinkTagEvent evt)

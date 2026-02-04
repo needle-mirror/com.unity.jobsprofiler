@@ -105,6 +105,10 @@ struct GenerateDepenedicesMeshJob : IJob
     [ReadOnly]
     internal JobSelection m_selectedEvent;
 
+    /// Whether the Jobs group is folded (used to determine preview mode for dependency lines)
+    [ReadOnly]
+    internal bool m_isJobsGroupFolded;
+
     internal NativeList<DependJobInfo> m_dependencyJobs;
     internal NativeList<DependJobInfo> m_depedantJobs;
 
@@ -278,19 +282,19 @@ struct GenerateDepenedicesMeshJob : IJob
     /// <summary>
     /// Draw connections to the jobs that depends on the selected job (left side)
     /// </summary>
-    void DrawDependencyJobs(in NativeArray<float> threadOffsets, NativeList<int> events, int eventIndex)
+    void DrawDependencyJobs(in NativeArray<float> threadOffsets, NativeList<int> events, int eventIndex, bool isPreviewMode)
     {
         if (!events.IsEmpty && m_settings.showDependsOn)
-            DrawLineBetweenEvents(Color.yellow, EventSide.Default, LineLocation.Bottom, threadOffsets, eventIndex, events);
+            DrawLineBetweenEvents(JobsProfilerColors.DependencyColor, EventSide.Default, LineLocation.Bottom, threadOffsets, eventIndex, events, isPreviewMode);
     }
 
     /// <summary>
     /// Draw connections to the jobs that depends on the selected job (right side in the timeline)
     /// </summary>
-    void DrawDependantJobs(in NativeArray<float> threadOffsets, NativeList<int> events, int eventIndex)
+    void DrawDependantJobs(in NativeArray<float> threadOffsets, NativeList<int> events, int eventIndex, bool isPreviewMode)
     {
         if (!events.IsEmpty && m_settings.showDependantOn)
-            DrawLineBetweenEvents(Color.yellow, EventSide.Default, LineLocation.Bottom, threadOffsets, eventIndex, events);
+            DrawLineBetweenEvents(JobsProfilerColors.DependencyColor, EventSide.Default, LineLocation.Bottom, threadOffsets, eventIndex, events, isPreviewMode);
     }
 
     void DrawLineBetweenEvents(
@@ -299,7 +303,8 @@ struct GenerateDepenedicesMeshJob : IJob
         LineLocation lineLocation,
         in NativeArray<float> threadOffsets,
         int startEvent,
-        NativeList<int> targetEvents)
+        NativeList<int> targetEvents,
+        bool isPreviewMode)
     {
         Rect source = GetRectForEvent(threadOffsets, startEvent);
 
@@ -311,11 +316,11 @@ struct GenerateDepenedicesMeshJob : IJob
 
         NativeArray<Rect> rects = new NativeArray<Rect>(targetEvents.Length, Allocator.Temp);
 
+        // In preview mode, use small fixed offset
+        // In normal mode, use source bar height to draw at bottom
         float offset = 0.0f;
-
-        // TODO: Use proper constant for bar height
         if (lineLocation == LineLocation.Bottom)
-            offset = 20.0f;
+            offset = isPreviewMode ? 0.0f : (source.x1y1.y - source.x0y0.y);
 
         // Get the rects for the events and also keep track of the max x and min x value of these
         for (int i = 0; i < targetEvents.Length; ++i)
@@ -426,7 +431,7 @@ struct GenerateDepenedicesMeshJob : IJob
             {
                 Rect rect = rects[i];
 
-                float y = rect.x1y1.y;
+                float y = rect.x0y0.y + offset;
 
                 float2 endPos = new float2(sourceX, y);
                 float2 startPos = new float2(rect.x1y1.x, y);
@@ -475,7 +480,7 @@ struct GenerateDepenedicesMeshJob : IJob
         }
     }
 
-    void DrawEventsByInfo(JobFlow info, in NativeArray<float> tempOffsets, int index, ref StartCompleteInfo startCompleteInfo, ref int waitedOnIndex, in DependencyLookupTables tables)
+    void DrawEventsByInfo(JobFlow info, in NativeArray<float> tempOffsets, int index, ref StartCompleteInfo startCompleteInfo, ref int waitedOnIndex, in DependencyLookupTables tables, bool isPreviewMode)
     {
         NativeList<int> events = new NativeList<int>(m_jobEventList.Length, Allocator.Temp);
 
@@ -488,7 +493,7 @@ struct GenerateDepenedicesMeshJob : IJob
             case JobFlowState.WaitedOn:
             {
                 if (m_settings.showCompletedByWait)
-                    DrawLineBetweenEvents(color, EventSide.Right, LineLocation.Bottom, tempOffsets, info.eventIndex, events);
+                    DrawLineBetweenEvents(color, EventSide.Right, LineLocation.Bottom, tempOffsets, info.eventIndex, events, isPreviewMode);
 
                 startCompleteInfo.completeFrame = m_frameIndex;
                 startCompleteInfo.completeEventIndex = info.eventIndex;
@@ -501,7 +506,7 @@ struct GenerateDepenedicesMeshJob : IJob
             case JobFlowState.BeginSchedule:
             {
                 if (m_settings.showScheduledBy)
-                    DrawLineBetweenEvents(color, EventSide.Left, LineLocation.Top, tempOffsets, info.eventIndex, events);
+                    DrawLineBetweenEvents(color, EventSide.Left, LineLocation.Top, tempOffsets, info.eventIndex, events, isPreviewMode);
 
                 startCompleteInfo.startFrame = m_frameIndex;
                 startCompleteInfo.startEventIndex = info.eventIndex;
@@ -516,7 +521,7 @@ struct GenerateDepenedicesMeshJob : IJob
                 if (waitedOnIndex != index - 1)
                 {
                     if (m_settings.showCompletedByNoWait)
-                        DrawLineBetweenEvents(color, EventSide.Left, LineLocation.Bottom, tempOffsets, info.eventIndex, events);
+                        DrawLineBetweenEvents(color, EventSide.Left, LineLocation.Bottom, tempOffsets, info.eventIndex, events, isPreviewMode);
 
                     startCompleteInfo.completeFrame = m_frameIndex;
                     startCompleteInfo.completeEventIndex = info.eventIndex;
@@ -528,7 +533,7 @@ struct GenerateDepenedicesMeshJob : IJob
 
             default:
             {
-                DrawLineBetweenEvents(color, EventSide.Left, LineLocation.Bottom, tempOffsets, info.eventIndex, events);
+                DrawLineBetweenEvents(color, EventSide.Left, LineLocation.Bottom, tempOffsets, info.eventIndex, events, isPreviewMode);
                 break;
             }
         }
@@ -546,9 +551,9 @@ struct GenerateDepenedicesMeshJob : IJob
         };
     }
 
-    void RenderDependantJobsRecursive(NativeHashSet<int> visitedEvents, in NativeArray<float> tempOffsets, NativeList<int> dependantEvents, ulong jobHandle, int selectedEvent, int level, in DependencyLookupTables tables)
+    void RenderDependantJobsRecursive(NativeHashSet<int> visitedEvents, in NativeArray<float> tempOffsets, NativeList<int> dependantEvents, ulong jobHandle, int selectedEvent, int level, in DependencyLookupTables tables, bool isPreviewMode)
     {
-        DrawDependantJobs(tempOffsets, dependantEvents, selectedEvent);
+        DrawDependantJobs(tempOffsets, dependantEvents, selectedEvent, isPreviewMode);
 
         for (int i = 0; i < dependantEvents.Length; ++i)
         {
@@ -562,7 +567,7 @@ struct GenerateDepenedicesMeshJob : IJob
                 {
                     NativeList<int> events = new NativeList<int>(m_jobEventList.Length, Allocator.Temp);
                     GetEventsWithHandleAsDependency(events, outHandle, tables);
-                    RenderDependantJobsRecursive(visitedEvents, tempOffsets, events, outHandle, currentEvent, level + 1, tables);
+                    RenderDependantJobsRecursive(visitedEvents, tempOffsets, events, outHandle, currentEvent, level + 1, tables, isPreviewMode);
                     events.Dispose();
                 }
 
@@ -571,9 +576,9 @@ struct GenerateDepenedicesMeshJob : IJob
         }
     }
 
-    void RenderDependencyJobsRecursive(NativeHashSet<int> visitedEvents, in NativeArray<float> tempOffsets, NativeList<int> dependantEvents, ulong jobHandle, int selectedEvent, int level, in DependencyLookupTables tables)
+    void RenderDependencyJobsRecursive(NativeHashSet<int> visitedEvents, in NativeArray<float> tempOffsets, NativeList<int> dependantEvents, ulong jobHandle, int selectedEvent, int level, in DependencyLookupTables tables, bool isPreviewMode)
     {
-        DrawDependencyJobs(tempOffsets, dependantEvents, selectedEvent);
+        DrawDependencyJobs(tempOffsets, dependantEvents, selectedEvent, isPreviewMode);
 
         for (int i = 0; i < dependantEvents.Length; ++i)
         {
@@ -586,7 +591,7 @@ struct GenerateDepenedicesMeshJob : IJob
                 if (m_eventHandleLookup.TryGetValue(currentEvent, out outHandle))
                 {
                     NativeList<int> events = GatherDepedencyJobsFromHandle(outHandle, tables);
-                    RenderDependencyJobsRecursive(visitedEvents, tempOffsets, events, outHandle, currentEvent, level + 1, tables);
+                    RenderDependencyJobsRecursive(visitedEvents, tempOffsets, events, outHandle, currentEvent, level + 1, tables, isPreviewMode);
                     events.Dispose();
                 }
 
@@ -637,6 +642,7 @@ struct GenerateDepenedicesMeshJob : IJob
         var lookupTables = BuildLookupTables();
 
         NativeArray<float> tempOffsets = new NativeArray<float>(m_threads.Length, Allocator.Temp);
+        bool isPreviewMode = m_isJobsGroupFolded;
 
         int waitedOnIndex = -1;
 
@@ -645,10 +651,14 @@ struct GenerateDepenedicesMeshJob : IJob
             ThreadPosition threadPos;
 
             if (m_threadOffsets.TryGetValue(m_threads[i].threadId, out threadPos))
+            {
                 tempOffsets[i] = (float)threadPos.offset;
+            }
             else
+            {
                 // Large number outside of the screen
                 tempOffsets[i] = 1024;
+            }
         }
 
         ulong jobHandle = m_selectedEvent.jobHandle.ToUlong();
@@ -670,7 +680,7 @@ struct GenerateDepenedicesMeshJob : IJob
                 if (info.eventIndex != selectedEventIndex)
                     continue;
 
-                DrawEventsByInfo(info, tempOffsets, index, ref startCompleteInfo, ref waitedOnIndex, lookupTables);
+                DrawEventsByInfo(info, tempOffsets, index, ref startCompleteInfo, ref waitedOnIndex, lookupTables, isPreviewMode);
 
                 break;
             }
@@ -696,7 +706,7 @@ struct GenerateDepenedicesMeshJob : IJob
                 if (info.handle.ToUlong() != jobHandle)
                     continue;
 
-                DrawEventsByInfo(info, tempOffsets, index, ref startCompleteInfo, ref waitedOnIndex, lookupTables);
+                DrawEventsByInfo(info, tempOffsets, index, ref startCompleteInfo, ref waitedOnIndex, lookupTables, isPreviewMode);
             }
 
             var dependantEvents = new NativeList<int>(m_jobEventList.Length, Allocator.Temp);
@@ -717,19 +727,19 @@ struct GenerateDepenedicesMeshJob : IJob
 
                 if (m_settings.showDependantOn)
                 {
-                    RenderDependantJobsRecursive(visitedEvents, tempOffsets, dependantEvents, jobHandle, m_selectedEvent.eventIndex, 0, lookupTables);
+                    RenderDependantJobsRecursive(visitedEvents, tempOffsets, dependantEvents, jobHandle, m_selectedEvent.eventIndex, 0, lookupTables, isPreviewMode);
                     visitedEvents.Clear();
                 }
 
                 if (m_settings.showDependsOn)
-                    RenderDependencyJobsRecursive(visitedEvents, tempOffsets, dependencyEvents, jobHandle, m_selectedEvent.eventIndex, 0, lookupTables);
+                    RenderDependencyJobsRecursive(visitedEvents, tempOffsets, dependencyEvents, jobHandle, m_selectedEvent.eventIndex, 0, lookupTables, isPreviewMode);
 
                 visitedEvents.Dispose();
             }
             else
             {
-                DrawDependencyJobs(tempOffsets, dependencyEvents, m_selectedEvent.eventIndex);
-                DrawDependantJobs(tempOffsets, dependantEvents, m_selectedEvent.eventIndex);
+                DrawDependencyJobs(tempOffsets, dependencyEvents, m_selectedEvent.eventIndex, isPreviewMode);
+                DrawDependantJobs(tempOffsets, dependantEvents, m_selectedEvent.eventIndex, isPreviewMode);
             }
 
             dependantEvents.Dispose();

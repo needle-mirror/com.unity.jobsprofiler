@@ -77,7 +77,6 @@ internal class ZoomableArea
 
     private float m_MinWidth = 0.01f;
     private const float kMinHeight = 0.05f;
-    private bool m_verticalZoom = false;
 
     private const float k_ScrollStepSize = 10f; // mirrors GUI scrollstepsize as there is no global const for this.
 
@@ -201,7 +200,6 @@ internal class ZoomableArea
     internal float rightmargin { get { return m_MarginRight; } set { m_MarginRight = value; } }
     internal float topmargin { get { return m_MarginTop; } set { m_MarginTop = value; } }
     internal float bottommargin { get { return m_MarginBottom; } set { m_MarginBottom = value; } }
-    internal bool verticalZoom { get { return m_verticalZoom; } set { m_verticalZoom = value; } }
     //internal float vSliderWidth { get { return vSlider ? styles.sliderWidth : 0f; } }
     //internal float hSliderHeight { get { return hSlider ? styles.sliderWidth : 0f; } }
 
@@ -608,12 +606,9 @@ internal class ZoomableArea
     {
         // Get delta (from scroll wheel or mouse pad)
         // Add x and y delta to cover all cases
-        // (scrool view has only y or only x when shift is pressed,
+        // (scroll wheel has only y or only x when shift is pressed,
         // while mouse pad has both x and y at all times)
-        float delta = Event.current.delta.x;
-
-        if (!m_verticalZoom)
-            delta += Event.current.delta.y;
+        float delta = Event.current.delta.x + Event.current.delta.y;
 
         if (scrollwhell)
             delta = -delta;

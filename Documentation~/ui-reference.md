@@ -27,7 +27,6 @@ Customize how to navigate the Timeline. Choose from the following options in the
 
 | Value                   | Description                    |
 | :---------------------- | :----------------------------- |
-| **Vertical Zoom**       | Enable this setting to zoom in and out of the Timeline view vertically. Press Alt + use the scroll wheel on your mouse to zoom in and out vertically. |
 | **Zoom on event hover** | Enable this setting so that when you hover over an entry in the Job details panel, the Jobs Profiler zooms into and enlarges the entry in the Timeline view. If you disable this setting, when you hover over an entry in the Job details panel, the Jobs Profiler navigates to the entry in the Timeline view but doesn't zoom into it.|
 
 ## Job details panel

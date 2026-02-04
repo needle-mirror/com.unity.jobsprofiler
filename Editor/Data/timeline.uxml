@@ -2,19 +2,19 @@
     <ui:TwoPaneSplitView orientation="Vertical" name="split_view" fixed-pane-initial-dimension="200" fixed-pane-index="1">
         <ui:VisualElement style="height: 502px;">
             <ui:TwoPaneSplitView orientation="Horizontal" name="timeline_jobs_info_split" fixed-pane-initial-dimension="600" fixed-pane-index="1" style="flex-direction: column;">
-                <ui:VisualElement name="timeline_area" style="background-color: rgba(0, 0, 0, 0); flex-direction: row; border-left-width: 1px; border-right-width: 1px; border-top-width: 0; border-bottom-width: 1px; border-left-color: rgb(0, 0, 0); border-right-color: rgb(0, 0, 0); border-top-color: rgb(0, 0, 0); border-bottom-color: rgb(0, 0, 0); flex-grow: 1; height: auto;">
-                    <ui:VisualElement name="threads_area" style="flex-grow: 1; background-color: rgb(40, 40, 40); width: 178px; height: auto; flex-basis: auto; flex-direction: column; align-self: auto; min-width: 178px; max-width: 178px; border-right-width: 1px; border-right-color: rgb(167, 167, 167);">
+                <ui:VisualElement name="timeline_area" style="background-color: rgba(0, 0, 0, 0); flex-direction: row; border-left-width: 1px; border-right-width: 1px; border-top-width: 0; border-bottom-width: 1px; flex-grow: 1; height: auto;">
+                    <ui:VisualElement name="threads_area" class="jobs-profiler-threads-area" style="flex-grow: 1; width: 178px; height: auto; flex-basis: auto; flex-direction: column; align-self: auto; min-width: 178px; max-width: 178px; border-right-width: 1px;">
                         <ui:VisualElement name="tick_marks_spacing" style="flex-grow: 1; height: 20px; align-self: stretch; max-height: 20px; overflow: hidden;" />
                         <ui:VisualElement name="threads_element" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0);" />
                     </ui:VisualElement>
-                    <ui:VisualElement name="timeline_area" style="flex-grow: 1; background-color: rgb(40, 40, 40); flex-direction: column; height: auto; align-self: auto; align-items: auto; flex-basis: auto; flex-wrap: nowrap; width: auto; border-left-color: rgba(0, 0, 0, 0); border-right-color: rgba(0, 0, 0, 0); border-top-color: rgba(0, 0, 0, 0); border-bottom-color: rgba(0, 0, 0, 0);">
+                    <ui:VisualElement name="timeline_area" class="jobs-profiler-timeline-background" style="flex-grow: 1; flex-direction: column; height: auto; align-self: auto; align-items: auto; flex-basis: auto; flex-wrap: nowrap; width: auto; border-left-color: rgba(0, 0, 0, 0); border-right-color: rgba(0, 0, 0, 0); border-top-color: rgba(0, 0, 0, 0); border-bottom-color: rgba(0, 0, 0, 0);">
                         <ui:VisualElement name="tick_marks" style="flex-grow: 1; height: 20px; align-self: stretch; max-height: 20px; overflow: hidden;" />
                         <ui:VisualElement name="timeline" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); align-self: stretch; overflow: hidden;" />
                         <ui:MinMaxSlider picking-mode="Ignore" low-limit="-10" high-limit="40" name="timeline_horizontal_scroll" value="10,12" style="flex-direction: row; flex-grow: 1; max-height: 20px; min-height: 10px; width: auto; min-width: auto; align-self: stretch;" />
                     </ui:VisualElement>
                     <ui:Scroller high-value="100" direction="Vertical" value="0" name="timeline_vertical_scroll" style="opacity: 1;" />
                 </ui:VisualElement>
-                <ui:VisualElement name="jobs_info" style="flex-grow: 1; flex-direction: column; align-self: stretch; justify-content: flex-start; align-items: auto; flex-shrink: 1; align-content: flex-start; padding-left: 18px; padding-top: 8px; padding-right: 4px;">
+                <ui:VisualElement name="jobs_info" class="jobs-profiler-info-panel" style="flex-grow: 1; flex-direction: column; align-self: stretch; justify-content: flex-start; align-items: auto; flex-shrink: 1; align-content: flex-start; padding-left: 18px; padding-top: 8px; padding-right: 4px;">
                     <ui:Label tabindex="-1" text="JobName" display-tooltip-when-elided="true" name="job_name" style="font-size: 14px; justify-content: flex-start; align-items: flex-end; align-self: flex-start; -unity-font-style: bold;" />
                     <ui:Label tabindex="-1" text="0.02 ms&#10;" display-tooltip-when-elided="true" name="job_time" triple-click-selects-line="false" style="align-self: flex-start; padding-bottom: 20px;" />
                     <ui:VisualElement name="jobs_info_data" style="flex-grow: 1; align-self: stretch;">

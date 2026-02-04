@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.0.1-exp.8] - 2026-02-04
+
+### Changed
+* Split JobsProfilerColors for Burst compatibility
+* Improve thread and group separator lines
+* Use USS variables for theme colors
+* Add top border to jobs info panel
+* Add left padding and update theme colors in Stats
+* Match foldout font size to main view
+* Align single-thread group labels with bars
+
+### Fixed
+* Fix selection of small merged events
+* Clear JobsInfo panel on data clear
+* Correct preview lines in preview mode
+* Fixed so compact mode shows arrows correctly
+* Fix dependency lines in folded group mode
+* Fix group separator positioning
+* Fix timeline thread packing and memory leak
+
+## [0.0.1-exp.7] - 2026-01-16
+
+### Added
+* Light theme support for Jobs Profiler
+* Color-blind mode support using Unity's accessibility settings
+
+### Changed
+* Show link underline only on hover
+* Removed vertical zoom experimental feature
+
+### Fixed
+* Sort order reset on hover in details view
+
 ## [0.0.1-exp.6] - 2026-01-13
 
 ### Added

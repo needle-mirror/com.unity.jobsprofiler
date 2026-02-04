@@ -356,6 +356,7 @@ internal class Stats : VisualElement
                 label.RegisterCallback<PointerOverLinkTagEvent>(HyperlinkOnPointerOver);
                 label.RegisterCallback<PointerOutLinkTagEvent>(HyperlinkOnPointerOut);
                 label.styleSheets.Add(m_labelStyleSheet);
+                label.style.paddingLeft = 6;
                 label.userData = index;
                 return label;
             };
@@ -369,6 +370,7 @@ internal class Stats : VisualElement
         m_statsList = new MultiColumnListView(columns);
         m_statsList.viewDataKey = "JobsProfiler.Stats";
         m_statsList.itemsSource = m_stats;
+        m_statsList.styleSheets.Add(m_labelStyleSheet);
 #if UNITY_2023_3_OR_NEWER
         m_statsList.sortingMode = ColumnSortingMode.Custom;
 #else
@@ -378,7 +380,8 @@ internal class Stats : VisualElement
 
         Show();
 
-        style.backgroundColor = new Color(0.22f, 0.22f, 0.22f, 1.0f);
+        styleSheets.Add(m_labelStyleSheet);
+        AddToClassList("jobs-profiler-main-background");
         parent.Add(this);
 
         m_frameCache = frameCache;
@@ -395,8 +398,8 @@ internal class Stats : VisualElement
             case DataValue.Type.String:
                 {
                     if (dataValue.isLink)
-                        label.text = String.Format("<link=\"{0}\"><color=#40a0ff><u>{1}</u></color></link>",
-                                                            (row << kRowShift) + columnIndex, dataValue.stringData);
+                        label.text = String.Format("<link=\"{0}\"><color={1}>{2}</color></link>",
+                                                            (row << kRowShift) + columnIndex, JobsProfilerSettings.LinkColorHex, dataValue.stringData);
                     else
                         label.text = dataValue.stringData;
 
@@ -405,8 +408,8 @@ internal class Stats : VisualElement
             case DataValue.Type.Int:
                 {
                     if (dataValue.isLink)
-                        label.text = String.Format("<link=\"{0}\"><color=#40a0ff><u>{1}</u></color></link>",
-                                                            (row << kRowShift) + columnIndex, dataValue.intData);
+                        label.text = String.Format("<link=\"{0}\"><color={1}>{2}</color></link>",
+                                                            (row << kRowShift) + columnIndex, JobsProfilerSettings.LinkColorHex, dataValue.intData);
                     else
                         label.text = dataValue.intData.ToString();
 
@@ -421,8 +424,8 @@ internal class Stats : VisualElement
                     }
                     else if (dataValue.isLink)
                     {
-                        label.text = String.Format("<link=\"{0}\"><color=#40a0ff><u>{1:0.000} ms</u></color></link>",
-                                                  (row << kRowShift) + columnIndex, dataValue.floatData);
+                        label.text = String.Format("<link=\"{0}\"><color={1}>{2:0.000} ms</color></link>",
+                                                  (row << kRowShift) + columnIndex, JobsProfilerSettings.LinkColorHex, dataValue.floatData);
                         label.SetEnabled(true);
                     }
                     else
@@ -438,11 +441,23 @@ internal class Stats : VisualElement
 
     static internal void HyperlinkOnPointerOver(PointerOverLinkTagEvent evt)
     {
-        (evt.currentTarget as Label).AddToClassList("link-cursor");
+        var label = evt.currentTarget as Label;
+        label.AddToClassList("link-cursor");
+        // Add underline tags around the link content
+        string text = label.text;
+        int start = text.IndexOf('>', text.IndexOf("<color=")) + 1;
+        int end = text.IndexOf("</color>");
+        if (start > 0 && end > start)
+        {
+            label.text = text.Insert(end, "</u>").Insert(start, "<u>");
+        }
     }
     static internal void HyperlinkOnPointerOut(PointerOutLinkTagEvent evt)
     {
-        (evt.target as Label).RemoveFromClassList("link-cursor");
+        var label = evt.target as Label;
+        label.RemoveFromClassList("link-cursor");
+        // Remove underline tags
+        label.text = label.text.Replace("<u>", "").Replace("</u>", "");
     }
 
     void LinkUpClicked(PointerUpLinkTagEvent evt)
