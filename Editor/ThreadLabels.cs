@@ -252,8 +252,9 @@ internal class ThreadLabels : VisualElement
                     continue;
                 }
 
-                if (label.text != thread.name)
-                    label.text = thread.name.ToString();
+                string threadName = thread.name.ToString();
+                if (label.text != threadName)
+                    label.text = threadName;
 
                 // Update thread ID (callback will use current value)
                 label.m_threadId = thread.threadId;

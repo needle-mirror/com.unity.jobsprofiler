@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.0.1-exp.9] - 2026-03-04
+
+### Fixed
+* Fix exception when comparing null thread names
+* Compilation fix
+
 ## [0.0.1-exp.8] - 2026-02-04
 
 ### Changed

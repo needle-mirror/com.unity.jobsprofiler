@@ -1,6 +1,6 @@
 {
   "name": "com.unity.jobsprofiler",
-  "version": "0.0.1-exp.8",
+  "version": "0.0.1-exp.9",
   "displayName": "Jobs Profiler",
   "description": "Package that empowers developers to profile and inspect Jobs",
   "unity": "6000.0",
@@ -14,15 +14,15 @@
     "Performance"
   ],
   "_upm": {
-    "changelog": "### Changed\n* Split JobsProfilerColors for Burst compatibility\n* Improve thread and group separator lines\n* Use USS variables for theme colors\n* Add top border to jobs info panel\n* Add left padding and update theme colors in Stats\n* Match foldout font size to main view\n* Align single-thread group labels with bars\n\n### Fixed\n* Fix selection of small merged events\n* Clear JobsInfo panel on data clear\n* Correct preview lines in preview mode\n* Fixed so compact mode shows arrows correctly\n* Fix dependency lines in folded group mode\n* Fix group separator positioning\n* Fix timeline thread packing and memory leak"
+    "changelog": "### Fixed\n* Fix exception when comparing null thread names\n* Compilation fix"
   },
   "upmCi": {
-    "footprint": "534ac4a50ae0a25fb4c9284fcdc68ad782bc1c16"
+    "footprint": "ca09722736d5581b29eda3163bbcd0b69e95aae2"
   },
   "documentationUrl": "https://docs.unity3d.com/Packages/com.unity.jobsprofiler@0.0/manual/index.html",
   "repository": {
     "url": "https://github.cds.internal.unity3d.com/unity/dots.git",
     "type": "git",
-    "revision": "66d0963a22de5becb9513468455ae5fef2320d9c"
+    "revision": "e702ee065199e3b8098af37476d3736a591e943b"
   }
 }
