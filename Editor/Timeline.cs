@@ -738,7 +738,7 @@ struct GenerateMeshJob : IJob
                 catId = prevCategory;
             }
 
-            if (isScheduleJobEvent && state == MergeState.Default)
+            if (isScheduleJobEvent && state == MergeState.Default && m_settings.showScheduledBy)
             {
                 float arrowSize = 6.0f;
                 Color32 color = JobFlow.getScheduleColor();
@@ -762,7 +762,7 @@ struct GenerateMeshJob : IJob
                 float2 arrowPos = new float2(c1.x - kStartJobEvtSpacing, c1.y - arrowSize + 1.0f);
 
                 // If we haven't selected this job we draw an arrow (skip in preview mode and filtered events)
-                if (!isFoldedPreview && !isFilteredOut && !(jobSelection.state == JobSelection.State.Selected && jobSelection.eventIndex == eventIndex))
+                if (m_settings.showScheduledBy && !isFoldedPreview && !isFilteredOut && !(jobSelection.state == JobSelection.State.Selected && jobSelection.eventIndex == eventIndex))
                     DrawArrow(arrowPos, color, arrowSize, PrimitiveRenderer.ArrowDirection.Down, eventIndex);
             }
             else
@@ -1076,6 +1076,8 @@ class TimelineBarView : VisualElement, IDisposable
     internal SettingsMenu m_settingsMenu;
     // Settings
     internal DropdownField m_paralleJobsNavigation;
+    private TwoPaneSplitView m_splitView;
+    private ToolbarToggle m_jobsInfoToggle;
     private VisualElement m_timeline;
 
     internal List<NativeArray<JobSelection>> m_jobSelectionJobs;
@@ -1172,11 +1174,11 @@ class TimelineBarView : VisualElement, IDisposable
 
         m_paralleJobsNavigation = this.Query<DropdownField>("parallel_jobs_navigation").First();
 
-        TwoPaneSplitView splitView = this.Query<TwoPaneSplitView>("split_view").First();
-        splitView.fixedPaneInitialDimension = kShowTimelineHeight;
-        splitView.RemoveAt(1);
+        m_splitView = this.Query<TwoPaneSplitView>("split_view").First();
+        m_splitView.fixedPaneInitialDimension = kShowTimelineHeight;
+        m_splitView.RemoveAt(1);
 
-        m_stats = new Stats(splitView, frameCache, m_filter);
+        m_stats = new Stats(m_splitView, frameCache, m_filter);
 
         m_tickLabels = new TickLabels(m_tickHandler, m_zoomArea, tick_marks);
 
@@ -1267,6 +1269,11 @@ class TimelineBarView : VisualElement, IDisposable
         m_settingsMenu = new SettingsMenu();
         m_settingsMenu.CreateKebabButton(settingsContainer);
 
+        VisualElement toggleContainer = rootView.Query<VisualElement>("jobs_info_toggle_container").First();
+        m_jobsInfoToggle = new ToolbarToggle { text = "Jobs Info", value = true };
+        m_jobsInfoToggle.RegisterValueChangedCallback(OnJobsInfoToggleChanged);
+        toggleContainer.Add(m_jobsInfoToggle);
+
         parent.Add(this);
     }
 
@@ -1288,7 +1295,32 @@ class TimelineBarView : VisualElement, IDisposable
         m_tickLabels.HideLabels();
         m_stats.ClearData();
         m_jobInfoPanel.Deactivate();
+        m_jobInfoPanel.ClearHistory();
         m_nextFrame = -1;
+    }
+
+    void OnJobsInfoToggleChanged(ChangeEvent<bool> evt)
+    {
+        bool show = evt.newValue;
+
+        // Stats table
+        m_stats.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+
+        // Hide the TwoPaneSplitView drag handle too
+        var dragHandle = m_splitView.Q(className: "unity-two-pane-split-view__dragline-anchor");
+        if (dragHandle != null)
+            dragHandle.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+
+        // Arrow flags are gated by the master toggle in Update() every frame, so no
+        // need to set them here.
+
+        // JobsInfoPanel dependency section
+        m_jobInfoPanel.SetDependencyInfoVisible(show);
+
+        // Kebab arrow items
+        m_settingsMenu.SetArrowsEnabled(show);
+
+        MarkDirtyRepaint();
     }
 
     /// <summary>
@@ -1399,12 +1431,14 @@ class TimelineBarView : VisualElement, IDisposable
         m_filter.Update(m_nextFrame);
         m_stats.Update();
 
-        // Sync settings from the settings menu
+        // Sync settings from the settings menu (arrow flags are gated by the Jobs Info master toggle)
+        bool jobsInfoOn = m_jobsInfoToggle.value;
         m_settings.zoomOnEventFocus = m_settingsMenu.ZoomOnEventFocus;
-        m_settings.showDependsOn = m_settingsMenu.ShowDependsOn;
-        m_settings.showDependantOn = m_settingsMenu.ShowDependantOn;
-        m_settings.showCompletedByWait = m_settingsMenu.ShowCompletedByWait;
-        m_settings.showCompletedByNoWait = m_settingsMenu.ShowCompletedByNoWait;
+        m_settings.showScheduledBy        = jobsInfoOn;
+        m_settings.showDependsOn          = jobsInfoOn && m_settingsMenu.ShowDependsOn;
+        m_settings.showDependantOn        = jobsInfoOn && m_settingsMenu.ShowDependantOn;
+        m_settings.showCompletedByWait    = jobsInfoOn && m_settingsMenu.ShowCompletedByWait;
+        m_settings.showCompletedByNoWait  = jobsInfoOn && m_settingsMenu.ShowCompletedByNoWait;
         m_settings.showFullDependencyChain = m_settingsMenu.ShowFullDependencyChain;
         m_settings.zoomOnEventHover = m_settingsMenu.ZoomOnEventHover;
         m_settings.showFoldedGroupPreview = m_settingsMenu.ShowFoldedGroupPreview;
@@ -1449,6 +1483,14 @@ class TimelineBarView : VisualElement, IDisposable
 
         m_tickLabels.Update(m_tickHandler, m_zoomArea, m_nextFrame, m_dragRange.textLabel, frameTime);
 
+        bool isHistoryNav = false;
+        ClickLinkEvent historyNavEvent = m_jobInfoPanel.GetHistoryNavigation();
+        if (historyNavEvent.jobId != 0)
+        {
+            isHistoryNav = true;
+            UpdateClickEvent(historyNavEvent);
+        }
+
         var t = m_jobSelection;
 
         // TODO: Clean this up a bit
@@ -1477,6 +1519,11 @@ class TimelineBarView : VisualElement, IDisposable
 
             if (m_frameCache.GetFrame(t.frameIndex, out frameData))
                 m_stats.SelectRowByMarkerId(frameData.events[t.eventIndex].markerId);
+
+            if (!isHistoryNav)
+                m_jobInfoPanel.PushHistory(t.frameIndex, t.eventIndex);
+            else
+                m_jobInfoPanel.RestoreHistoryTab();
         }
         else if (t.state == JobSelection.State.Default)
         {

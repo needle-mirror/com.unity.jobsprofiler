@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.1-exp.10] - 2026-07-08
+
+### Added
+* "Jobs Info" toolbar toggle to show or hide the jobs info panel and its dependency arrows
+* Back/forward navigation history in the jobs info panel
+* Tabbed jobs info panel (General, Depends on, Dependencies) with dependency counts shown in the tab labels
+
 ## [0.0.1-exp.9] - 2026-03-04
 
 ### Fixed

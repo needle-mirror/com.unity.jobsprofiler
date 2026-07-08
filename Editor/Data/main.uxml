@@ -4,6 +4,7 @@
             <ui:VisualElement name="filter_spacer" />
             <uie:ToolbarSearchField name="filter" style="width: 300px;" />
             <ui:VisualElement style="flex-grow: 1;" />
+            <ui:VisualElement name="jobs_info_toggle_container" />
             <ui:VisualElement name="settings_menu_container" />
         </ui:VisualElement>
     </ui:VisualElement>

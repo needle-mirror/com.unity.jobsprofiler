@@ -221,15 +221,39 @@ internal class JobsList
 
 internal class JobsInfoPanel
 {
+    struct HistoryEntry
+    {
+        internal int frameIndex;
+        internal int eventIndex;
+        internal int tabIndex;
+    }
+
+    const int kMaxHistory = 100;
+
     Label m_jobName;
     Label m_jobTime;
     Label m_scheduledBy;
     Label m_completedBy;
 
+    Tab m_tabDependsOn;
+    Tab m_tabDependencies;
+    Label m_dependsOnCount;
+    Label m_dependingCount;
+
     JobsList m_dependsOn;
     JobsList m_dependantOn;
 
     VisualElement m_infoPanelData;
+
+    Button m_backButton;
+    Button m_forwardButton;
+    TabView m_tabView;
+
+    List<HistoryEntry> m_history = new List<HistoryEntry>();
+    int m_historyIndex = -1;
+    bool m_hasPendingHistoryNav;
+    ClickLinkEvent m_historyNavEvent;
+    int m_pendingHistoryTab = -1;
 
     internal JobsInfoPanel(in VisualElement root, StyleSheet labelStyleSheet)
     {
@@ -239,6 +263,19 @@ internal class JobsInfoPanel
         m_completedBy = root.Query<Label>("completed_by").First();
         m_jobTime = root.Query<Label>("job_time").First();
         m_infoPanelData = root.Query<VisualElement>("jobs_info_data");
+
+        m_tabDependsOn   = root.Q<Tab>("tab_depends_on");
+        m_tabDependencies = root.Q<Tab>("tab_dependencies");
+        m_dependsOnCount  = root.Q<Label>("depends_on_count");
+        m_dependingCount  = root.Q<Label>("depending_count");
+
+        m_tabView = root.Q<TabView>("jobs_info_tabs");
+
+        m_backButton = root.Q<Button>("nav_back");
+        m_forwardButton = root.Q<Button>("nav_forward");
+        m_backButton.clicked += OnBackClicked;
+        m_forwardButton.clicked += OnForwardClicked;
+        UpdateNavButtonStates();
 
         m_scheduledBy.RegisterCallback<PointerOverLinkTagEvent>(Stats.HyperlinkOnPointerOver);
         m_scheduledBy.RegisterCallback<PointerOutLinkTagEvent>(Stats.HyperlinkOnPointerOut);
@@ -261,6 +298,13 @@ internal class JobsInfoPanel
     {
         m_dependsOn.UpdateData(dependsOnJobs, frameCache, jobSelection);
         m_dependantOn.UpdateData(dependantOnJobs, frameCache, jobSelection);
+
+        int n = dependsOnJobs.Length;
+        int m = dependantOnJobs.Length;
+        m_tabDependsOn.label    = n > 0 ? $"Depends on ({n})"   : "Depends on";
+        m_tabDependencies.label = m > 0 ? $"Dependencies ({m})" : "Dependencies";
+        m_dependsOnCount.text   = $"\u2192 {n} (depends on)";
+        m_dependingCount.text   = $"\u2192 {m} (depending)";
     }
 
     internal ClickLinkEvent GetClickOrHoverEvent()
@@ -290,6 +334,112 @@ internal class JobsInfoPanel
         };
     }
 
+    internal void SetDependencyInfoVisible(bool visible)
+    {
+        m_infoPanelData.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+
+        // The nav buttons live above the (now hidden) panel data, so hide them too
+        // to avoid navigating while the content is not shown.
+        m_backButton.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+        m_forwardButton.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+        if (visible)
+            UpdateNavButtonStates();
+    }
+
+    void OnBackClicked()
+    {
+        if (m_historyIndex <= 0)
+            return;
+
+        // Capture the current tab before leaving
+        var cur = m_history[m_historyIndex];
+        m_history[m_historyIndex] = new HistoryEntry { frameIndex = cur.frameIndex, eventIndex = cur.eventIndex, tabIndex = m_tabView.selectedTabIndex };
+
+        m_historyIndex--;
+        HistoryEntry entry = m_history[m_historyIndex];
+        m_historyNavEvent = new ClickLinkEvent { jobId = 1, frameIndex = entry.frameIndex, eventIndex = entry.eventIndex, hover = false };
+        m_pendingHistoryTab = entry.tabIndex;
+        m_hasPendingHistoryNav = true;
+        UpdateNavButtonStates();
+    }
+
+    void OnForwardClicked()
+    {
+        if (m_historyIndex >= m_history.Count - 1)
+            return;
+
+        // Capture the current tab before leaving
+        var cur = m_history[m_historyIndex];
+        m_history[m_historyIndex] = new HistoryEntry { frameIndex = cur.frameIndex, eventIndex = cur.eventIndex, tabIndex = m_tabView.selectedTabIndex };
+
+        m_historyIndex++;
+        HistoryEntry entry = m_history[m_historyIndex];
+        m_historyNavEvent = new ClickLinkEvent { jobId = 1, frameIndex = entry.frameIndex, eventIndex = entry.eventIndex, hover = false };
+        m_pendingHistoryTab = entry.tabIndex;
+        m_hasPendingHistoryNav = true;
+        UpdateNavButtonStates();
+    }
+
+    void UpdateNavButtonStates()
+    {
+        m_backButton.SetEnabled(m_historyIndex > 0);
+        m_forwardButton.SetEnabled(m_historyIndex < m_history.Count - 1);
+    }
+
+    internal void PushHistory(int frameIndex, int eventIndex)
+    {
+        // Deduplicate consecutive identical entries
+        if (m_historyIndex >= 0)
+        {
+            HistoryEntry current = m_history[m_historyIndex];
+            if (current.frameIndex == frameIndex && current.eventIndex == eventIndex)
+                return;
+
+            // Capture the active tab for the entry we're leaving
+            m_history[m_historyIndex] = new HistoryEntry { frameIndex = current.frameIndex, eventIndex = current.eventIndex, tabIndex = m_tabView.selectedTabIndex };
+        }
+
+        // Discard forward history
+        int removeStart = m_historyIndex + 1;
+        if (removeStart < m_history.Count)
+            m_history.RemoveRange(removeStart, m_history.Count - removeStart);
+
+        // Cap at max size by dropping the oldest entry
+        if (m_history.Count >= kMaxHistory)
+            m_history.RemoveAt(0);
+        else
+            m_historyIndex++;
+
+        m_history.Add(new HistoryEntry { frameIndex = frameIndex, eventIndex = eventIndex, tabIndex = m_tabView.selectedTabIndex });
+        UpdateNavButtonStates();
+    }
+
+    internal ClickLinkEvent GetHistoryNavigation()
+    {
+        if (!m_hasPendingHistoryNav)
+            return new ClickLinkEvent { jobId = 0, frameIndex = -1, eventIndex = -1, hover = false };
+        m_hasPendingHistoryNav = false;
+        return m_historyNavEvent;
+    }
+
+    internal void RestoreHistoryTab()
+    {
+        if (m_pendingHistoryTab >= 0)
+        {
+            m_tabView.selectedTabIndex = m_pendingHistoryTab;
+            m_pendingHistoryTab = -1;
+        }
+    }
+
+    internal void ClearHistory()
+    {
+        m_history.Clear();
+        m_historyIndex = -1;
+        m_hasPendingHistoryNav = false;
+        m_pendingHistoryTab = -1;
+        UpdateNavButtonStates();
+    }
+
     internal void Activate()
     {
         m_scheduledBy.SetEnabled(true);
@@ -317,6 +467,10 @@ internal class JobsInfoPanel
         m_completedBy.SetEnabled(false);
         m_dependsOn.Clear();
         m_dependantOn.Clear();
+        m_tabDependsOn.label    = "Depends on";
+        m_tabDependencies.label = "Dependencies";
+        m_dependsOnCount.text   = "\u2192 0 (depends on)";
+        m_dependingCount.text   = "\u2192 0 (depending)";
     }
 
     internal void ClearData()

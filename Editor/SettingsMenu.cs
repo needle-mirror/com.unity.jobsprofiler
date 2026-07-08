@@ -11,6 +11,9 @@ internal class SettingsMenu
 {
     private ToolbarMenu m_toolbarMenu;
 
+    // Master arrow toggle (controlled by the Jobs Info toolbar button)
+    bool m_arrowsEnabled = true;
+
     // Display settings
     bool m_zoomOnEventFocus = true;
     bool m_showDependsOn = true;
@@ -27,7 +30,7 @@ internal class SettingsMenu
     {
     }
 
-    void RebuildMenu()
+    internal void RebuildMenu()
     {
         var menu = m_toolbarMenu.menu;
 
@@ -45,19 +48,23 @@ internal class SettingsMenu
 
         menu.AppendAction("Show Depends On",
             a => { m_showDependsOn = !m_showDependsOn; },
-            a => m_showDependsOn ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+            a => !m_arrowsEnabled ? DropdownMenuAction.Status.Disabled :
+                 m_showDependsOn ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
 
         menu.AppendAction("Show Dependant On",
             a => { m_showDependantOn = !m_showDependantOn; },
-            a => m_showDependantOn ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+            a => !m_arrowsEnabled ? DropdownMenuAction.Status.Disabled :
+                 m_showDependantOn ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
 
         menu.AppendAction("Show Completed by (Wait)",
             a => { m_showCompletedByWait = !m_showCompletedByWait; },
-            a => m_showCompletedByWait ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+            a => !m_arrowsEnabled ? DropdownMenuAction.Status.Disabled :
+                 m_showCompletedByWait ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
 
         menu.AppendAction("Show Completed by (No Wait)",
             a => { m_showCompletedByNoWait = !m_showCompletedByNoWait; },
-            a => m_showCompletedByNoWait ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+            a => !m_arrowsEnabled ? DropdownMenuAction.Status.Disabled :
+                 m_showCompletedByNoWait ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
 
         menu.AppendAction("Show full dependency chain",
             a => { m_showFullDependencyChain = !m_showFullDependencyChain; },
@@ -74,6 +81,12 @@ internal class SettingsMenu
         menu.AppendAction("Show folded group preview",
             a => { m_showFoldedGroupPreview = !m_showFoldedGroupPreview; },
             a => m_showFoldedGroupPreview ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+    }
+
+    internal void SetArrowsEnabled(bool enabled)
+    {
+        m_arrowsEnabled = enabled;
+        RebuildMenu();
     }
 
     internal ToolbarMenu CreateKebabButton(VisualElement parent)
